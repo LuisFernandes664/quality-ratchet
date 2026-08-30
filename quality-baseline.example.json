@@ -1,0 +1,22 @@
+{
+  "frozen_at": "2026-05-04",
+  "metrics": {
+    "lint_violations_total": 483,
+    "duplication_pct": 2.2,
+    "coverage_line_pct": 7.0,
+    "mutation_score_covered_pct": 81.6,
+    "files_above_line_limit": 19,
+    "complexity_violations": 0,
+    "vulnerabilities_high": 0
+  },
+  "rules": {
+    "monotonic_down": [
+      "lint_violations_total",
+      "duplication_pct",
+      "files_above_line_limit",
+      "complexity_violations",
+      "vulnerabilities_high"
+    ],
+    "monotonic_up": ["coverage_line_pct", "mutation_score_covered_pct"]
+  }
+}

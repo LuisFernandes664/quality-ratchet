@@ -1,0 +1,45 @@
+name: Quality ratchet
+description: Fails a pull request when any quality metric regresses against a committed baseline. Zero dependencies.
+author: Luis Fernandes
+
+branding:
+  icon: lock
+  color: purple
+
+inputs:
+  baseline:
+    description: Path to the committed quality-baseline.json.
+    required: false
+    default: quality-baseline.json
+  metrics:
+    description: Path to the JSON holding the metrics measured in this run.
+    required: false
+    default: metrics-current.json
+  token:
+    description: Token with pull-requests write permission, used to post the summary comment.
+    required: false
+    default: ${{ github.token }}
+  comment:
+    description: Post or update the summary comment on the pull request.
+    required: false
+    default: "true"
+  bypass-label:
+    description: Label that forgives a failure, for production hotfixes.
+    required: false
+    default: hotfix-bypass-ratchet
+  lower-baseline-pattern:
+    description: Regex over the pull request title that authorises lowering the baseline.
+    required: false
+    default: "^(chore: lower baseline|refactor:)"
+
+outputs:
+  passed:
+    description: "true when no metric regressed."
+  summary:
+    description: Markdown summary of every metric compared.
+  regressions:
+    description: JSON array of the metrics that regressed.
+
+runs:
+  using: node20
+  main: src/index.mjs

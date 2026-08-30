@@ -1,0 +1,15 @@
+{
+  "name": "quality-ratchet",
+  "version": "1.0.0",
+  "description": "GitHub Action que impede metricas de qualidade de regredirem. Sem dependencias.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "coverage": "node --test --experimental-test-coverage"
+  }
+}

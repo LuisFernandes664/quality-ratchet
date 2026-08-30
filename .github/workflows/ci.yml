@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --test
+      - run: node --test --experimental-test-coverage
+
+  self-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Metrics that improve on the baseline
+        run: |
+          cat > metrics-current.json <<'JSON'
+          {
+            "lint_violations_total": 400,
+            "duplication_pct": 1.8,
+            "coverage_line_pct": 12.5,
+            "mutation_score_covered_pct": 82.0,
+            "files_above_line_limit": 19,
+            "complexity_violations": 0,
+            "vulnerabilities_high": 0
+          }
+          JSON
+
+      - name: The ratchet runs against itself
+        uses: ./
+        with:
+          baseline: quality-baseline.example.json
+          metrics: metrics-current.json
