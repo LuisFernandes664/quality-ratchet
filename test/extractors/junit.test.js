@@ -105,6 +105,81 @@ const PYTEST = [
 ].join('');
 
 /**
+ * Relatório do Vitest 4 (reporter `junit`): o teste "soft" tem três `expect.soft` a falhar e
+ * o Vitest escreve um `<failure>` por cada um. O próprio relatório diz 2 testes, 1 falhado.
+ */
+const VITEST = [
+  '<?xml version="1.0" encoding="UTF-8" ?>',
+  '<testsuites name="vitest tests" tests="2" failures="1" errors="0" time="0.019477281">',
+  [
+    '    <testsuite name="soft.test.mjs" timestamp="2026-09-27T14:51:41.216Z" hostname="vm"',
+    ' tests="2" failures="1" errors="0" skipped="0" time="0.019477281">',
+  ].join(''),
+  '        <testcase classname="soft.test.mjs" name="soft" time="0.016407877">',
+  ...[[1, 2, 3], [2, 3, 4], [3, 4, 5]].flatMap(([received, expected, line]) => [
+    [
+      `            <failure message="expected ${received} to be ${expected} // Object.is`,
+      ' equality" type="AssertionError">',
+    ].join(''),
+    `AssertionError: expected ${received} to be ${expected} // Object.is equality`,
+    '',
+    `- ${expected}`,
+    `+ ${received}`,
+    '',
+    ` \u276F soft.test.mjs:${line}:18`,
+    '            </failure>',
+  ]),
+  '        </testcase>',
+  '        <testcase classname="soft.test.mjs" name="ok" time="0.00055051">',
+  '        </testcase>',
+  '    </testsuite>',
+  '</testsuites>',
+  '',
+].join('\n');
+
+/**
+ * Relatório do jest-junit 17 (Jest 30): o teste "bad" falha e o `afterEach` também, e o
+ * jest-junit escreve um `<failure>` por mensagem. O próprio relatório diz 1 falhado.
+ */
+const JEST_HOOK = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<testsuites name="jest tests" tests="2" failures="1" errors="0" time="0.507">',
+  [
+    '  <testsuite name="undefined" errors="0" failures="1" skipped="0"',
+    ' timestamp="2026-09-27T14:51:48" time="0.299" tests="2">',
+  ].join(''),
+  '    <testcase classname=" bad" name=" bad" time="0.006">',
+  '      <failure>Error: expect(received).toBe(expected) // Object.is equality',
+  '',
+  'Expected: 2',
+  'Received: 1',
+  '    at Object.toBe (/home/runner/work/app/app/bad.test.js:2:31)',
+  '    at new Promise (&lt;anonymous&gt;)</failure>',
+  '      <failure>Error: cleanup failed',
+  '    at Object.&lt;anonymous&gt; (/home/runner/work/app/app/bad.test.js:1:74)</failure>',
+  '    </testcase>',
+  '    <testcase classname=" good" name=" good" time="0.001">',
+  '    </testcase>',
+  '  </testsuite>',
+  '</testsuites>',
+].join('\n');
+
+/**
+ * Relatório do Vitest com os testes indicados; cada teste falhado tem os `<failure>` dados.
+ * @param {number[]} failuresPerTest número de `<failure>` de cada teste (0 = passou)
+ * @returns {string}
+ */
+function vitestReport(failuresPerTest) {
+  const cases = failuresPerTest.map((failures, index) => [
+    `<testcase classname="a.test.mjs" name="t${index}" time="0.001">`,
+    ...Array.from({ length: failures }, (_, n) => (
+      `<failure message="expected ${n} to be ${n + 1}" type="AssertionError"></failure>`)),
+    '</testcase>',
+  ].join(''));
+  return `<testsuites><testsuite name="a.test.mjs">${cases.join('')}</testsuite></testsuites>`;
+}
+
+/**
  * @param {string} text
  * @param {string} [field]
  * @returns {number}
@@ -129,12 +204,69 @@ describe('junit', () => {
     assert.equal(run(JEST, 'tests'), 5);
   });
 
-  test('failures conta os <failure>', () => {
+  test('failures conta os <testcase> com pelo menos um <failure>', () => {
     assert.equal(run(JEST, 'failures'), 1);
   });
 
-  test('errors conta os <error>', () => {
+  test('failures conta uma só vez o teste com vários <failure> (Vitest, expect.soft)', () => {
+    assert.equal(run(VITEST, 'failures'), 1);
+  });
+
+  test('failures conta uma só vez o teste cujo afterEach também falha (jest-junit)', () => {
+    assert.equal(run(JEST_HOOK, 'failures'), 1);
+  });
+
+  test('um segundo teste a falhar sobe failures mesmo com menos <failure> no total', () => {
+    const base = run(vitestReport([3, 0, 0]), 'failures');
+    const pullRequest = run(vitestReport([1, 1, 0]), 'failures');
+    assert.deepEqual([base, pullRequest], [1, 2]);
+  });
+
+  test('mais asserções falhadas no mesmo teste não sobem failures', () => {
+    assert.equal(run(vitestReport([4, 0]), 'failures'), run(vitestReport([1, 0]), 'failures'));
+  });
+
+  test('errors conta os <testcase> com pelo menos um <error>', () => {
     assert.equal(run(PYTEST, 'errors'), 1);
+  });
+
+  test('errors conta uma só vez o teste com vários <error>', () => {
+    const text = '<testsuite><testcase name="a"><error/><error message="x"/></testcase>'
+      + '</testsuite>';
+    assert.equal(run(text, 'errors'), 1);
+  });
+
+  test('teste com <failure> e <error> conta em failures', () => {
+    const text = '<testsuite><testcase name="a"><failure/><error/></testcase></testsuite>';
+    assert.equal(run(text, 'failures'), 1);
+  });
+
+  test('teste com <failure> e <error> conta em errors', () => {
+    const text = '<testsuite><testcase name="a"><failure/><error/></testcase></testsuite>';
+    assert.equal(run(text, 'errors'), 1);
+  });
+
+  test('<failure> fora de um <testcase> não conta', () => {
+    const text = '<testsuite><testcase name="a"/><failure message="x"/></testsuite>';
+    assert.equal(run(text, 'failures'), 0);
+  });
+
+  test('<testcase/> auto-fechado não conta o <failure> do teste seguinte duas vezes', () => {
+    const text = '<testsuite><testcase name="a"/><testcase name="b"><failure/></testcase>'
+      + '</testsuite>';
+    assert.equal(run(text, 'failures'), 1);
+  });
+
+  test('atributo com ">" entre aspas não fecha a tag do <testcase>', () => {
+    const text = '<testsuite><testcase name="a > b" classname=\'x>y\'><failure/></testcase>'
+      + '<testcase name="c"></testcase></testsuite>';
+    assert.equal(run(text, 'failures'), 1);
+  });
+
+  test('não confunde <errors> nem <failureDetail> com <error> e <failure>', () => {
+    const text = '<testsuite><testcase name="a"><errors/><failureDetail/></testcase>'
+      + '</testsuite>';
+    assert.deepEqual([run(text, 'failures'), run(text, 'errors')], [0, 0]);
   });
 
   test('skipped conta os <skipped/> auto-fechados', () => {
@@ -175,7 +307,7 @@ describe('junit', () => {
   test('documento sem <testsuite> nem <testsuites> dá extractor_report_unparseable', () => {
     assert.throws(() => run('<html><body><testcase/></body></html>'), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'no <testsuites> or <testsuite> element found' },
+      params: { format: FORMAT, reason: { code: 'reason_junit_no_suite', params: {} } },
     });
   });
 

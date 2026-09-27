@@ -106,7 +106,10 @@ describe('jscpd', () => {
   test('relatório sem statistics.total dá extractor_report_unparseable', () => {
     assert.throws(() => run('{"statistics":{"formats":{}},"duplicates":[]}'), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'missing "statistics.total"' },
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_key_missing', params: { path: 'statistics.total' } },
+      },
     });
   });
 

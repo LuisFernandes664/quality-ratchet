@@ -72,6 +72,28 @@ const ENOLOCK = JSON.stringify({
 });
 
 /**
+ * JSON escrito pelo npm 10 quando o serviço de auditoria não responde: a causa vem no
+ * `message` de topo e `error.summary` fica vazio.
+ */
+const ENDPOINT_UNREACHABLE = JSON.stringify({
+  message: 'request to http://127.0.0.1:9/-/npm/v1/security/audits/quick failed, reason: '
+    + 'connect ECONNREFUSED 127.0.0.1:9',
+  error: { summary: '', detail: '' },
+});
+
+/** JSON escrito pelo npm 10 quando o registry não tem o serviço de auditoria (404). */
+const ENDPOINT_404 = JSON.stringify({
+  message: '404 Not Found - POST http://registry.example/-/npm/v1/security/audits/quick - '
+    + 'Not found',
+  method: 'POST',
+  uri: 'http://registry.example/-/npm/v1/security/audits/quick',
+  headers: { 'content-type': ['application/json'] },
+  statusCode: 404,
+  body: { error: 'Not found' },
+  error: { summary: '', detail: '' },
+});
+
+/**
  * @param {string} text
  * @param {string} [field]
  * @returns {number}
@@ -138,7 +160,57 @@ describe('npm-audit', () => {
       ...UNPARSEABLE,
       params: {
         format: FORMAT,
-        reason: 'npm audit failed: ENOLOCK This command requires an existing lockfile.',
+        reason: {
+          code: 'reason_npm_audit_failed',
+          params: { details: 'ENOLOCK This command requires an existing lockfile.' },
+        },
+      },
+    });
+  });
+
+  test('serviço de auditoria inacessível dá o motivo do message de topo', () => {
+    assert.throws(() => run(ENDPOINT_UNREACHABLE), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: {
+          code: 'reason_npm_audit_failed',
+          params: {
+            details: 'request to http://127.0.0.1:9/-/npm/v1/security/audits/quick failed, '
+              + 'reason: connect ECONNREFUSED 127.0.0.1:9',
+          },
+        },
+      },
+    });
+  });
+
+  test('registry sem serviço de auditoria dá o 404 do message de topo', () => {
+    assert.throws(() => run(ENDPOINT_404), (error) => (
+      String(error.params.reason.params.details).startsWith('404 Not Found - POST')));
+  });
+
+  test('tapa as credenciais dos URLs do motivo', () => {
+    const text = JSON.stringify({
+      message: 'request to https://ci:s3cret@npm.example/-/npm/v1/security/audits/quick failed',
+      error: { summary: '', detail: '' },
+    });
+    assert.throws(() => run(text), (error) => (
+      error.params.reason.params.details
+        === 'request to https://***@npm.example/-/npm/v1/security/audits/quick failed'));
+  });
+
+  test('sem summary nem message usa o detail do erro', () => {
+    const text = '{"error":{"summary":"","detail":"Try again later"}}';
+    assert.throws(() => run(text), (error) => (
+      error.params.reason.params.details === 'Try again later'));
+  });
+
+  test('erro sem nenhum texto dá o motivo sem detalhes', () => {
+    assert.throws(() => run('{"error":{}}'), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_npm_audit_failed', params: { details: '' } },
       },
     });
   });
@@ -146,7 +218,10 @@ describe('npm-audit', () => {
   test('relatório sem metadata.vulnerabilities dá extractor_report_unparseable', () => {
     assert.throws(() => run('{"auditReportVersion":2,"vulnerabilities":{}}'), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'missing "metadata.vulnerabilities"' },
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_key_missing', params: { path: 'metadata.vulnerabilities' } },
+      },
     });
   });
 

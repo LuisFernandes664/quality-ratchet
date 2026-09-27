@@ -1,13 +1,17 @@
 // @ts-check
 /**
  * Extractor de relatórios Cobertura XML (coverage.py, Istanbul, Cobertura, Coverlet, ...).
- * Lê os atributos `line-rate` e `branch-rate` do elemento raiz `<coverage>` e converte-os
- * para percentagem.
+ * Calcula a percentagem a partir das contagens exactas do elemento raiz `<coverage>`
+ * (`lines-covered`/`lines-valid`, `branches-covered`/`branches-valid`). As taxas
+ * `line-rate`/`branch-rate` vêm arredondadas pelas ferramentas (o coverage.py escreve "1"
+ * com 20002 de 20003 linhas cobertas) e só se usam quando faltam as contagens.
  */
 
 import {
+  because,
   defineExtractor,
   parseStrictNumber,
+  percentage,
   reportEmpty,
   requireContent,
   stripXmlNoise,
@@ -16,15 +20,26 @@ import {
 
 /** @typedef {import('./shared.js').ReadRequest} ReadRequest */
 
+/**
+ * Atributos do elemento raiz de um campo.
+ * @typedef {object} FieldAttributes
+ * @property {string} rate taxa entre 0 e 1, arredondada pela ferramenta
+ * @property {string} valid número de elementos medidos
+ * @property {string} covered número de elementos cobertos
+ */
+
 const FORMAT = 'cobertura';
 
+/** Elemento raiz esperado. */
+const ROOT = 'coverage';
+
 /**
- * Atributos (taxa, total de elementos válidos) do elemento raiz para cada campo.
- * @type {Record<string, [string, string]>}
+ * Atributos do elemento raiz para cada campo.
+ * @type {Record<string, FieldAttributes>}
  */
 const ATTRIBUTES = {
-  lines: ['line-rate', 'lines-valid'],
-  branches: ['branch-rate', 'branches-valid'],
+  lines: { rate: 'line-rate', valid: 'lines-valid', covered: 'lines-covered' },
+  branches: { rate: 'branch-rate', valid: 'branches-valid', covered: 'branches-covered' },
 };
 
 /** Primeira tag de abertura bem formada: nome e lista de atributos. */
@@ -41,18 +56,36 @@ export const coberturaExtractor = defineExtractor({
 });
 
 /**
- * Lê a taxa do campo pedido e devolve-a em percentagem. Quando o elemento raiz declara
- * zero elementos válidos (ex: `branches-valid="0"`), o relatório conta como vazio.
+ * Devolve a percentagem do campo pedido: covered/valid quando o elemento raiz tem as duas
+ * contagens, senão a taxa. Quando o elemento raiz declara zero elementos válidos (ex:
+ * `branches-valid="0"`), o relatório conta como vazio.
  * @param {string} text
  * @param {ReadRequest} request
  * @returns {number}
  */
 function readCobertura(text, request) {
   const attributes = rootAttributes(requireContent(text, FORMAT));
-  const [rateName, validName] = ATTRIBUTES[request.field];
-  const valid = attributes.get(validName);
+  const names = ATTRIBUTES[request.field];
+  const valid = attributes.get(names.valid);
   if (valid !== undefined && parseStrictNumber(valid) === 0) throw reportEmpty(FORMAT);
-  return ratePercent(readRate(attributes, rateName));
+  const covered = attributes.get(names.covered);
+  if (valid === undefined || covered === undefined) {
+    return ratePercent(readRate(attributes, names.rate));
+  }
+  const hit = readCountAttribute(covered, names.covered);
+  return percentage(hit, readCountAttribute(valid, names.valid), FORMAT);
+}
+
+/**
+ * Converte o valor de um atributo de contagem num inteiro não negativo.
+ * @param {string} raw valor do atributo
+ * @param {string} name nome do atributo, para a mensagem
+ * @returns {number}
+ */
+function readCountAttribute(raw, name) {
+  const count = parseStrictNumber(raw);
+  if (count !== null && Number.isSafeInteger(count) && count >= 0) return count;
+  throw unparseable(FORMAT, because('reason_attribute_not_count', { name, value: raw }));
 }
 
 /**
@@ -62,10 +95,10 @@ function readCobertura(text, request) {
  */
 function rootAttributes(text) {
   const match = START_TAG.exec(stripXmlNoise(text));
-  if (!match) throw unparseable(FORMAT, 'no XML element found');
+  if (!match) throw unparseable(FORMAT, because('reason_xml_no_element'));
   const [, name, attributes] = match;
-  if (name !== 'coverage') {
-    throw unparseable(FORMAT, `root element is <${name}>, expected <coverage>`);
+  if (name !== ROOT) {
+    throw unparseable(FORMAT, because('reason_xml_root', { found: name, expected: ROOT }));
   }
   return parseAttributes(attributes);
 }
@@ -92,11 +125,16 @@ function parseAttributes(source) {
  */
 function readRate(attributes, name) {
   const raw = attributes.get(name);
-  if (raw === undefined) throw unparseable(FORMAT, `missing attribute "${name}" on <coverage>`);
+  if (raw === undefined) {
+    throw unparseable(FORMAT, because('reason_attribute_missing', { name, element: ROOT }));
+  }
   const rate = parseStrictNumber(raw);
-  if (rate === null) throw unparseable(FORMAT, `attribute "${name}" is not a number: "${raw}"`);
+  if (rate === null) {
+    throw unparseable(FORMAT, because('reason_attribute_not_number', { name, value: raw }));
+  }
   if (rate < 0 || rate > 1) {
-    throw unparseable(FORMAT, `attribute "${name}" is not between 0 and 1: "${raw}"`);
+    const params = { name, value: raw, min: 0, max: 1 };
+    throw unparseable(FORMAT, because('reason_attribute_out_of_range', params));
   }
   return raw;
 }

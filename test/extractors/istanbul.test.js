@@ -78,10 +78,39 @@ describe('istanbul', () => {
     ['functions', 87.5],
     ['branches', 62.5],
   ]) {
-    test(`lê total.${field}.pct`, () => {
+    test(`calcula total.${field}.covered / total.${field}.total`, () => {
       assert.equal(run(REPORT, String(field)), expected);
     });
   }
+
+  test('devolve covered/total exacto e não o pct truncado pelo istanbul (c8)', () => {
+    const text = withTotal('lines', { total: 9, covered: 6, skipped: 0, pct: 66.66 });
+    assert.equal(run(text), 200 / 3);
+  });
+
+  test('detecta a perda de uma linha coberta que o pct truncado esconde', () => {
+    const before = withTotal('lines', { total: 20001, covered: 19998, skipped: 0, pct: 99.98 });
+    const after = withTotal('lines', { total: 20001, covered: 19997, skipped: 0, pct: 99.98 });
+    assert.deepEqual([run(before), run(after)], [(19998 * 100) / 20001, (19997 * 100) / 20001]);
+  });
+
+  test('sem covered nem total usa o pct', () => {
+    assert.equal(run(withTotal('lines', { pct: 81.25 })), 81.25);
+  });
+
+  test('covered que não é contagem faz usar o pct', () => {
+    assert.equal(run(withTotal('lines', { total: 9, covered: '6', pct: 66.66 })), 66.66);
+  });
+
+  test('covered maior do que total dá extractor_report_unparseable', () => {
+    assert.throws(() => run(withTotal('lines', { total: 10, covered: 11, pct: 100 })), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_hit_exceeds_total', params: { hit: 11, total: 10 } },
+      },
+    });
+  });
 
   test('pct "Unknown" dá extractor_report_empty', () => {
     assert.throws(() => run(UNKNOWN), EMPTY);
@@ -96,17 +125,25 @@ describe('istanbul', () => {
     const { total: _total, ...files } = SUMMARY;
     assert.throws(() => run(JSON.stringify(files)), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'missing "total.lines"' },
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_key_missing', params: { path: 'total.lines' } },
+      },
     });
   });
 
-  test('pct que não é número dá extractor_report_unparseable', () => {
-    const text = withTotal('lines', { total: 10, covered: 5, skipped: 0, pct: '50' });
-    assert.throws(() => run(text), UNPARSEABLE);
+  test('sem contagens, pct que não é número dá extractor_report_unparseable', () => {
+    assert.throws(() => run(withTotal('lines', { skipped: 0, pct: '50' })), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_not_number', params: { path: 'total.lines.pct' } },
+      },
+    });
   });
 
-  test('pct não finito dá extractor_report_unparseable', () => {
-    const text = '{"total":{"lines":{"total":10,"covered":5,"skipped":0,"pct":1e999}}}';
+  test('sem contagens, pct não finito dá extractor_report_unparseable', () => {
+    const text = '{"total":{"lines":{"skipped":0,"pct":1e999}}}';
     assert.throws(() => run(text), UNPARSEABLE);
   });
 

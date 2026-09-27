@@ -75,6 +75,100 @@ const NO_BRANCHES = [
 ].join('\n');
 
 /**
+ * Registo de `src/prog.c` capturado pelo lcov 2.0 (`gcc --coverage`) com o nome de teste
+ * indicado: FN, FNDA, BRDA, DA e resumos.
+ * @param {string} testName
+ * @param {{functions: number[], branches: string[], lines: number[], summary: string[]}} counts
+ * @returns {string[]}
+ */
+function progRecord(testName, counts) {
+  const branchLines = [3, 3, 8, 8, 8, 8, 12, 12];
+  const blocks = [0, 1, 0, 1, 2, 3, 0, 1];
+  const lineNumbers = [2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14];
+  return [
+    `TN:${testName}`,
+    'SF:src/prog.c',
+    'FN:10,15,main',
+    'FN:2,6,f',
+    'FN:7,9,g',
+    ...['main', 'f', 'g'].map((name, index) => `FNDA:${counts.functions[index]},${name}`),
+    counts.summary[0],
+    counts.summary[1],
+    ...counts.branches.map((taken, index) => (
+      `BRDA:${branchLines[index]},0,${blocks[index]},${taken}`)),
+    counts.summary[2],
+    counts.summary[3],
+    ...counts.lines.map((count, index) => `DA:${lineNumbers[index]},${count}`),
+    counts.summary[4],
+    counts.summary[5],
+    'end_of_record',
+  ];
+}
+
+/** Registo de `src/prog.c` do teste unitA (`./prog 1`). */
+const UNIT_A = progRecord('unitA', {
+  functions: [1, 1, 0],
+  branches: ['1', '0', '-', '-', '-', '-', '1', '0'],
+  lines: [1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1],
+  summary: ['FNF:3', 'FNH:2', 'BRF:8', 'BRH:2', 'LF:11', 'LH:7'],
+});
+
+/** Registo de `src/prog.c` do teste unitB (`./prog 2`). */
+const UNIT_B = progRecord('unitB', {
+  functions: [1, 0, 1],
+  branches: ['-', '-', '1', '0', '1', '0', '0', '1'],
+  lines: [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1],
+  summary: ['FNF:3', 'FNH:2', 'BRF:8', 'BRH:3', 'LF:11', 'LH:7'],
+});
+
+/**
+ * Tracefile de `lcov --capture --test-name unitA` e `--test-name unitB` juntos com
+ * `lcov -a a.info -a b.info`: o mesmo ficheiro com um registo por teste. O
+ * `lcov --summary` dá linhas 90.9% (10 de 11), funções 100% (3 de 3) e ramos 62.5% (5 de 8).
+ */
+const MULTI_TN = [...UNIT_A, ...UNIT_B, ''].join('\n');
+
+/**
+ * Registo mínimo com linhas DA e o resumo correspondente.
+ * @param {string} source
+ * @param {number[]} counts execuções de cada linha, a partir da linha 1
+ * @returns {string[]}
+ */
+function linesRecord(source, counts) {
+  return [
+    'TN:',
+    `SF:${source}`,
+    ...counts.map((count, index) => `DA:${index + 1},${count}`),
+    `LF:${counts.length}`,
+    `LH:${counts.filter((count) => count > 0).length}`,
+    'end_of_record',
+  ];
+}
+
+/**
+ * Registo do lcov 2.2 para as funções: `FNL` com as linhas e `FNA` por nome (alias). A
+ * função g tem dois nomes, que contam como uma só função.
+ * @param {string} testName
+ * @param {[number, number, number]} counts execuções de f, g(int) e g(long)
+ * @returns {string[]}
+ */
+function aliasRecord(testName, counts) {
+  const hit = (counts[0] > 0 ? 1 : 0) + (counts[1] + counts[2] > 0 ? 1 : 0);
+  return [
+    `TN:${testName}`,
+    'SF:src/g.cpp',
+    'FNL:0,2,6',
+    `FNA:0,${counts[0]},f`,
+    'FNL:1,7,9',
+    `FNA:1,${counts[1]},g(int)`,
+    `FNA:1,${counts[2]},g(long)`,
+    'FNF:2',
+    `FNH:${hit}`,
+    'end_of_record',
+  ];
+}
+
+/**
  * @param {string} text
  * @param {string} [field]
  * @returns {number}
@@ -107,9 +201,77 @@ describe('lcov', () => {
     assert.equal(run(REPORT, 'functions'), 75);
   });
 
-  test('ignora as linhas de detalhe DA e BRDA', () => {
+  test('um registo por ficheiro usa o resumo e não as linhas de detalhe DA', () => {
     const text = ['SF:src/a.js', 'DA:1,0', 'DA:2,0', 'LF:2', 'LH:2', 'end_of_record'].join('\n');
     assert.equal(run(text), 100);
+  });
+
+  test('lines junta os registos de cada TN do mesmo ficheiro pela união (lcov -a)', () => {
+    assert.equal(run(MULTI_TN, 'lines'), 1000 / 11);
+  });
+
+  test('branches junta os registos de cada TN pela união, com "-" como não atingido', () => {
+    assert.equal(run(MULTI_TN, 'branches'), 62.5);
+  });
+
+  test('functions junta os registos de cada TN pela união dos FNDA', () => {
+    assert.equal(run(MULTI_TN, 'functions'), 100);
+  });
+
+  test('o mesmo ficheiro repetido por concatenação, com TN vazio, junta-se pela união', () => {
+    const text = [...UNIT_A, ...UNIT_B].join('\n').replaceAll(/^TN:\w+$/gm, 'TN:');
+    assert.equal(run(text, 'lines'), 1000 / 11);
+  });
+
+  test('um novo teste que cobre menos linhas do que a média não baixa lines', () => {
+    const unitC = progRecord('unitC', {
+      functions: [1, 0, 0],
+      branches: ['-', '-', '-', '-', '-', '-', '0', '0'],
+      lines: [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0],
+      summary: ['FNF:3', 'FNH:1', 'BRF:8', 'BRH:0', 'LF:11', 'LH:2'],
+    });
+    assert.equal(run([...UNIT_A, ...UNIT_B, ...unitC].join('\n'), 'lines'), 1000 / 11);
+  });
+
+  test('ficheiros diferentes com o mesmo SF relativo (monorepo) somam-se', () => {
+    const text = [
+      ...linesRecord('src/index.js', [1, 0]),
+      ...linesRecord('src/index.js', [1, 1, 1, 0]),
+    ].join('\n');
+    assert.equal(run(text), (4 * 100) / 6);
+  });
+
+  test('o mesmo SF repetido só com resumos e o mesmo total conta o ficheiro uma vez', () => {
+    const text = [
+      'SF:src/a.js', 'LF:10', 'LH:4', 'end_of_record',
+      'SF:src/a.js', 'LF:10', 'LH:7', 'end_of_record',
+    ].join('\n');
+    assert.equal(run(text), 70);
+  });
+
+  test('FNA com o mesmo índice FNL (lcov 2.2) são uma só função, unida entre os TN', () => {
+    const text = [...aliasRecord('unitA', [1, 0, 0]), ...aliasRecord('unitB', [0, 0, 2])];
+    assert.equal(run(text.join('\n'), 'functions'), 100);
+  });
+
+  test('registo sem end_of_record no fim do ficheiro conta', () => {
+    assert.equal(run(['SF:src/a.js', 'LF:4', 'LH:3'].join('\n')), 75);
+  });
+
+  test('linha DA inválida dá extractor_report_unparseable', () => {
+    assert.throws(() => run(REPORT.replace('DA:7,0', 'DA:sete,0')), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_lcov_invalid_value', params: { key: 'DA', value: 'sete,0' } },
+      },
+    });
+  });
+
+  test('linha BRDA sem o número de vezes dá extractor_report_unparseable', () => {
+    assert.throws(() => run(REPORT.replace('BRDA:6,0,1,0', 'BRDA:6,0,1')), (error) => (
+      error.params.reason.code === 'reason_lcov_invalid_value'
+      && error.params.reason.params.key === 'BRDA'));
   });
 
   test('aceita fins de linha CRLF', () => {
@@ -127,7 +289,10 @@ describe('lcov', () => {
   test('mais linhas atingidas do que encontradas dá extractor_report_unparseable', () => {
     assert.throws(() => run(REPORT.replace('LH:4', 'LH:6')), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'hit count 9 exceeds total 8' },
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_hit_exceeds_total', params: { hit: 9, total: 8 } },
+      },
     });
   });
 
@@ -144,13 +309,19 @@ describe('lcov', () => {
   });
 
   test('texto sem registos SF dá extractor_report_unparseable', () => {
-    assert.throws(() => run('<html><body>Not Found</body></html>'), UNPARSEABLE);
+    assert.throws(() => run('<html><body>Not Found</body></html>'), {
+      ...UNPARSEABLE,
+      params: { format: FORMAT, reason: { code: 'reason_lcov_no_record', params: {} } },
+    });
   });
 
   test('contagem inválida numa linha de resumo dá extractor_report_unparseable', () => {
     assert.throws(() => run(REPORT.replace('LF:5', 'LF:cinco')), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'invalid "LF" value: "cinco"' },
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_lcov_invalid_value', params: { key: 'LF', value: 'cinco' } },
+      },
     });
   });
 

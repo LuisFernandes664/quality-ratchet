@@ -1,12 +1,17 @@
 // @ts-check
 import assert from 'node:assert/strict';
+import { readdir, readFile } from 'node:fs/promises';
 import { describe, test } from 'node:test';
 
 import { ExtractorError } from '../../src/core/errors.js';
+import { extract } from '../../src/extractors/index.js';
 import {
+  REASON_CODES,
+  because,
   countTags,
   defineExtractor,
   ensureFinite,
+  isCount,
   parseJson,
   parsePointer,
   parseStrictNumber,
@@ -17,12 +22,65 @@ import {
   resolvePointer,
 } from '../../src/extractors/shared.js';
 
+/** Pasta dos extractors, para as verificações sobre o código-fonte. */
+const EXTRACTORS_DIR = new URL('../../src/extractors/', import.meta.url);
+
+/**
+ * Relatórios inválidos de cada formato, com o código de motivo esperado.
+ * @type {Array<[string, import('../../src/core/types.js').MetricSource, string, string]>}
+ */
+const MALFORMED = [
+  ['lcov sem SF', { format: 'lcov', path: 'r' }, 'nada', 'reason_lcov_no_record'],
+  ['lcov com LF inválido', { format: 'lcov', path: 'r' }, 'SF:a\nLF:x',
+    'reason_lcov_invalid_value'],
+  ['istanbul sem total', { format: 'istanbul', path: 'r' }, '{"a":1}', 'reason_key_missing'],
+  ['cobertura sem <coverage>', { format: 'cobertura', path: 'r' }, '<report/>', 'reason_xml_root'],
+  [
+    'stryker com estado desconhecido',
+    { format: 'stryker', path: 'r' },
+    '{"files":{"a.js":{"mutants":[{"status":"X"}]}}}',
+    'reason_mutant_status_unknown',
+  ],
+  ['sarif com runs objecto', { format: 'sarif', path: 'r' }, '{"version":"2.1.0","runs":{}}',
+    'reason_not_array'],
+  ['sarif 1.0.0', { format: 'sarif', path: 'r' }, '{"version":"1.0.0","runs":[]}',
+    'reason_sarif_version'],
+  ['sarif com nível desconhecido', { format: 'sarif', path: 'r', levels: ['x'] }, '{}',
+    'reason_level_unknown'],
+  ['eslint com objecto', { format: 'eslint', path: 'r' }, '{}', 'reason_eslint_not_array'],
+  ['jscpd sem statistics', { format: 'jscpd', path: 'r' }, '{}', 'reason_key_missing'],
+  ['npm-audit falhado', { format: 'npm-audit', path: 'r' }, '{"error":{"code":"E1"}}',
+    'reason_npm_audit_failed'],
+  ['pip-audit com dependencies objecto', { format: 'pip-audit', path: 'r' },
+    '{"dependencies":{}}', 'reason_not_array'],
+  ['junit sem suite', { format: 'junit', path: 'r' }, '<html/>', 'reason_junit_no_suite'],
+  ['json com ponteiro relativo', { format: 'json', path: 'r', pointer: 'a' }, '{}',
+    'reason_pointer_not_absolute'],
+  ['json com ponteiro inexistente', { format: 'json', path: 'r', pointer: '/a' }, '{}',
+    'reason_pointer_not_found'],
+];
+
+/**
+ * Código-fonte de todos os extractors, sem os comentários.
+ * @returns {Promise<string>}
+ */
+async function extractorSources() {
+  const names = (await readdir(EXTRACTORS_DIR)).filter((name) => name.endsWith('.js'));
+  const texts = await Promise.all(names.map((name) => readFile(new URL(name, EXTRACTORS_DIR),
+    'utf8')));
+  return texts.join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
 const UNPARSEABLE = { name: 'ExtractorError', code: 'extractor_report_unparseable' };
 const EMPTY = { name: 'ExtractorError', code: 'extractor_report_empty' };
 const POINTER_INVALID = {
   name: 'ExtractorError',
   code: 'extractor_option_invalid',
-  params: { format: 'json', option: 'pointer', reason: 'missing' },
+  params: {
+    format: 'json',
+    option: 'pointer',
+    reason: { code: 'reason_pointer_missing', params: {} },
+  },
 };
 
 /**
@@ -86,7 +144,10 @@ describe('percentage', () => {
   test('parte maior do que o total dá extractor_report_unparseable', () => {
     assert.throws(() => percentage(5, 4, 'lcov'), {
       ...UNPARSEABLE,
-      params: { format: 'lcov', reason: 'hit count 5 exceeds total 4' },
+      params: {
+        format: 'lcov',
+        reason: { code: 'reason_hit_exceeds_total', params: { hit: 5, total: 4 } },
+      },
     });
   });
 });
@@ -121,7 +182,7 @@ describe('readNumber', () => {
   test('chave em falta dá extractor_report_unparseable com o caminho', () => {
     assert.throws(() => readNumber({ a: {} }, ['a', 'b'], 'x'), {
       ...UNPARSEABLE,
-      params: { format: 'x', reason: 'missing "a.b"' },
+      params: { format: 'x', reason: { code: 'reason_key_missing', params: { path: 'a.b' } } },
     });
   });
 
@@ -206,7 +267,11 @@ describe('parsePointer', () => {
   test('ponteiro que não é string dá extractor_option_invalid', () => {
     assert.throws(() => parsePointer(3, 'json'), {
       ...POINTER_INVALID,
-      params: { format: 'json', option: 'pointer', reason: 'must be a string' },
+      params: {
+        format: 'json',
+        option: 'pointer',
+        reason: { code: 'reason_pointer_not_string', params: {} },
+      },
     });
   });
 
@@ -290,6 +355,63 @@ describe('countTags', () => {
 
   test('trata o nome como texto literal e não como expressão regular', () => {
     assert.equal(countTags('<r><a.b/><axb/></r>', 'a.b'), 1);
+  });
+});
+
+describe('because', () => {
+  test('cria um Issue com o código e os parâmetros', () => {
+    assert.deepEqual(because('reason_not_array', { path: 'runs' }), {
+      code: 'reason_not_array',
+      params: { path: 'runs' },
+    });
+  });
+
+  test('sem parâmetros usa um objecto vazio', () => {
+    assert.deepEqual(because('reason_not_text'), { code: 'reason_not_text', params: {} });
+  });
+});
+
+describe('isCount', () => {
+  test('aceita inteiros não negativos', () => {
+    assert.deepEqual([0, 7, 20001].map(isCount), [true, true, true]);
+  });
+
+  test('rejeita negativos, fracções, não finitos e strings numéricas', () => {
+    assert.deepEqual([-1, 1.5, Infinity, Number.NaN, '6'].map(isCount), [
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+});
+
+describe('motivos dos extractors', () => {
+  for (const [label, source, text, code] of MALFORMED) {
+    test(`${label}: o motivo é o código ${code} do catálogo`, () => {
+      assert.throws(() => extract(source, text), (error) => (
+        error instanceof ExtractorError
+        && typeof error.params.reason === 'object'
+        && error.params.reason.code === code
+        && REASON_CODES.includes(code)));
+    });
+  }
+
+  test('todos os códigos usados com because() estão em REASON_CODES', async () => {
+    const used = [...(await extractorSources()).matchAll(/because\(\s*'([a-z_]+)'/g)];
+    const unknown = used.map(([, code]) => code).filter((code) => !REASON_CODES.includes(code));
+    assert.deepEqual(unknown, []);
+  });
+
+  test('todos os códigos de REASON_CODES são usados por algum extractor', async () => {
+    const source = await extractorSources();
+    assert.deepEqual(REASON_CODES.filter((code) => !source.includes(`because('${code}'`)), []);
+  });
+
+  test('nenhum extractor passa texto escrito à mão como motivo', async () => {
+    const pattern = /\b(?:unparseable\(\s*\w+|invalidOption\(\s*\w+,\s*'[^']*'),\s*[`'"]/g;
+    assert.deepEqual((await extractorSources()).match(pattern), null);
   });
 });
 

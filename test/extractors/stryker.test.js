@@ -127,7 +127,7 @@ describe('stryker', () => {
   test('relatório sem "files" dá extractor_report_unparseable', () => {
     assert.throws(() => run('{"schemaVersion":"1","thresholds":{"high":80,"low":60}}'), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'missing "files"' },
+      params: { format: FORMAT, reason: { code: 'reason_key_missing', params: { path: 'files' } } },
     });
   });
 
@@ -139,7 +139,13 @@ describe('stryker', () => {
   test('estado de mutante desconhecido dá extractor_report_unparseable', () => {
     assert.throws(() => run(report({ 'a.js': ['Killed', 'Exploded'] })), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'unknown mutant status "Exploded" in "a.js"' },
+      params: {
+        format: FORMAT,
+        reason: {
+          code: 'reason_mutant_status_unknown',
+          params: { status: 'Exploded', path: 'a.js' },
+        },
+      },
     });
   });
 

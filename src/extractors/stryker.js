@@ -6,6 +6,7 @@
 
 import { isPlainObject } from '../core/guards.js';
 import {
+  because,
   defineExtractor,
   parseJson,
   percentage,
@@ -76,7 +77,9 @@ function readStryker(text, request) {
  */
 function countStatuses(document) {
   const files = readPath(document, ['files'], FORMAT);
-  if (!isPlainObject(files)) throw unparseable(FORMAT, '"files" is not an object');
+  if (!isPlainObject(files)) {
+    throw unparseable(FORMAT, because('reason_not_object', { path: 'files' }));
+  }
   /** @type {Record<string, number>} */
   const counts = Object.fromEntries(STATUSES.map((status) => [status, 0]));
   let total = 0;
@@ -99,7 +102,7 @@ function countStatuses(document) {
 function mutantStatuses(file, path) {
   const mutants = isPlainObject(file) ? file.mutants : undefined;
   if (!Array.isArray(mutants)) {
-    throw unparseable(FORMAT, `"files.${path}.mutants" is not an array`);
+    throw unparseable(FORMAT, because('reason_not_array', { path: `files.${path}.mutants` }));
   }
   return mutants.map((mutant) => statusOf(mutant, path));
 }
@@ -113,5 +116,8 @@ function mutantStatuses(file, path) {
 function statusOf(mutant, path) {
   const status = isPlainObject(mutant) ? mutant.status : undefined;
   if (typeof status === 'string' && STATUSES.includes(status)) return status;
-  throw unparseable(FORMAT, `unknown mutant status "${String(status)}" in "${path}"`);
+  throw unparseable(FORMAT, because('reason_mutant_status_unknown', {
+    status: String(status),
+    path,
+  }));
 }

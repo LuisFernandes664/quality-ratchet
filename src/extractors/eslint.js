@@ -4,7 +4,14 @@
  * `errorCount` e `warningCount`.
  */
 
-import { defineExtractor, parseJson, readCount, reportEmpty, unparseable } from './shared.js';
+import {
+  because,
+  defineExtractor,
+  parseJson,
+  readCount,
+  reportEmpty,
+  unparseable,
+} from './shared.js';
 
 /** @typedef {import('./shared.js').ReadRequest} ReadRequest */
 
@@ -25,7 +32,7 @@ export const eslintExtractor = defineExtractor({
  */
 function readEslint(text, request) {
   const files = parseJson(text, FORMAT);
-  if (!Array.isArray(files)) throw unparseable(FORMAT, 'expected an array of file results');
+  if (!Array.isArray(files)) throw unparseable(FORMAT, because('reason_eslint_not_array'));
   if (files.length === 0) throw reportEmpty(FORMAT);
   let errors = 0;
   let warnings = 0;

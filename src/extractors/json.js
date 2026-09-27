@@ -5,6 +5,7 @@
  */
 
 import {
+  because,
   defineExtractor,
   parseJson,
   parsePointer,
@@ -34,7 +35,9 @@ function readJson(text, request) {
   const { pointer } = request.source;
   const tokens = parsePointer(pointer, FORMAT);
   const target = resolvePointer(parseJson(text, FORMAT), tokens);
-  if (!target.found) throw unparseable(FORMAT, `pointer "${pointer}" does not exist`);
+  if (!target.found) {
+    throw unparseable(FORMAT, because('reason_pointer_not_found', { pointer: String(pointer) }));
+  }
   return toMetricValue(target.value, String(pointer));
 }
 
@@ -50,5 +53,5 @@ function toMetricValue(value, pointer) {
   const number = typeof value === 'string' ? parseStrictNumber(value) : null;
   if (number !== null) return number;
   const kind = value === null ? 'null' : typeof value;
-  throw unparseable(FORMAT, `value at "${pointer}" is not numeric (found ${kind})`);
+  throw unparseable(FORMAT, because('reason_pointer_not_numeric', { pointer, kind }));
 }

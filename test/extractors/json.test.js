@@ -73,7 +73,11 @@ describe('json', () => {
   test('ponteiro em falta dá extractor_option_invalid', () => {
     assert.throws(() => run(REPORT, {}), {
       ...POINTER_INVALID,
-      params: { format: FORMAT, option: 'pointer', reason: 'missing' },
+      params: {
+        format: FORMAT,
+        option: 'pointer',
+        reason: { code: 'reason_pointer_missing', params: {} },
+      },
     });
   });
 
@@ -92,7 +96,13 @@ describe('json', () => {
   test('caminho inexistente dá extractor_report_unparseable', () => {
     assert.throws(() => run(REPORT, { pointer: '/bundle/sizes/app.js' }), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'pointer "/bundle/sizes/app.js" does not exist' },
+      params: {
+        format: FORMAT,
+        reason: {
+          code: 'reason_pointer_not_found',
+          params: { pointer: '/bundle/sizes/app.js' },
+        },
+      },
     });
   });
 
@@ -115,7 +125,13 @@ describe('json', () => {
   test('objecto dá extractor_report_unparseable', () => {
     assert.throws(() => run(REPORT, { pointer: '/flags/nested' }), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'value at "/flags/nested" is not numeric (found object)' },
+      params: {
+        format: FORMAT,
+        reason: {
+          code: 'reason_pointer_not_numeric',
+          params: { pointer: '/flags/nested', kind: 'object' },
+        },
+      },
     });
   });
 

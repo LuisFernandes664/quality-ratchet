@@ -13,7 +13,7 @@ const LEVELS_INVALID = {
   params: {
     format: FORMAT,
     option: 'levels',
-    reason: 'must be a non-empty array of error, warning, note, none',
+    reason: { code: 'reason_levels_invalid', params: { known: 'error, warning, note, none' } },
   },
 };
 
@@ -142,6 +142,68 @@ const CODEQL = log([{
 function withRules(rules, results) {
   return log([{ tool: { driver: { name: 'Semgrep OSS', rules } }, results }]);
 }
+
+/**
+ * Registo do formatador SARIF do ESLint (@microsoft/eslint-formatter-sarif 3.1.0) quando um
+ * ficheiro tem um erro de sintaxe: esse ficheiro não tem resultados, o erro fica nas
+ * notificações da invocação e a execução é marcada como falhada. Só os 2 problemas de
+ * `ok.js` aparecem em `results`.
+ */
+const ESLINT_PARSE_ERROR = log([{
+  tool: { driver: { name: 'ESLint', informationUri: 'https://eslint.org', version: '9.39.1' } },
+  artifacts: [{ location: { uri: 'file:///home/runner/work/app/app/a.js' } }],
+  results: [result('no-unused-vars', 'error'), result('no-console', 'warning')],
+  invocations: [{
+    toolConfigurationNotifications: [{
+      level: 'error',
+      message: { text: 'Parsing error: Unexpected token =' },
+      locations: [{
+        physicalLocation: {
+          artifactLocation: { uri: 'file:///home/runner/work/app/app/a.js', index: 0 },
+          region: { startLine: 4, startColumn: 7 },
+        },
+      }],
+      descriptor: { id: 'ESL0999' },
+    }],
+    executionSuccessful: false,
+  }],
+}]);
+
+/**
+ * Registo de um run com as invocações indicadas e um resultado.
+ * @param {Record<string, unknown>[]} invocations
+ * @returns {Record<string, unknown>}
+ */
+function invoked(invocations) {
+  return { ...run('Semgrep OSS', [result('a', 'error')]), invocations };
+}
+
+/**
+ * ErrorLog do compilador C# no formato por omissão (SARIF 1.0.0, como o `dotnet build
+ * -p:ErrorLog=build.sarif` o escreve): 3 diagnósticos, 2 suprimidos no código com
+ * `suppressionStates`, que o SARIF 2.1.0 não tem.
+ */
+const ROSLYN_V1 = JSON.stringify({
+  $schema: 'http://json.schemastore.org/sarif-1.0.0',
+  version: '1.0.0',
+  runs: [{
+    tool: {
+      name: 'Microsoft (R) Visual C# Compiler',
+      version: '4.12.0.0',
+      fileVersion: '4.12.0',
+      semanticVersion: '4.12.0',
+      language: 'en-US',
+    },
+    results: ['CA1822', 'CS0168', 'CA2007'].map((ruleId, index) => ({
+      ruleId,
+      level: 'warning',
+      message: `Diagnóstico ${ruleId}.`,
+      suppressionStates: index === 0 ? undefined : ['suppressedInSource'],
+      locations: [{ resultFile: { uri: 'file:///src/A.cs', region: { startLine: index + 3 } } }],
+    })),
+    rules: { CA1822: { id: 'CA1822', defaultLevel: 'warning' } },
+  }],
+});
 
 /**
  * @param {string} text
@@ -273,13 +335,109 @@ describe('sarif', () => {
   test('registo sem runs dá extractor_report_unparseable', () => {
     assert.throws(() => count('{"version":"2.1.0"}'), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'missing "runs"' },
+      params: { format: FORMAT, reason: { code: 'reason_key_missing', params: { path: 'runs' } } },
+    });
+  });
+
+  test('runs que não é array dá extractor_report_unparseable', () => {
+    assert.throws(() => count('{"version":"2.1.0","runs":{}}'), {
+      ...UNPARSEABLE,
+      params: { format: FORMAT, reason: { code: 'reason_not_array', params: { path: 'runs' } } },
     });
   });
 
   test('results que não é array dá extractor_report_unparseable', () => {
     const text = log([{ tool: { driver: { name: 'x' } }, results: { count: 1 } }]);
-    assert.throws(() => count(text), UNPARSEABLE);
+    assert.throws(() => count(text), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_not_array_of_objects', params: { path: 'runs[0].results' } },
+      },
+    });
+  });
+
+  test('execução falhada (erro de sintaxe no ESLint) dá extractor_report_unparseable', () => {
+    assert.throws(() => count(ESLINT_PARSE_ERROR), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: {
+          code: 'reason_sarif_execution_failed',
+          params: { run: 'runs[0]', details: 'Parsing error: Unexpected token =' },
+        },
+      },
+    });
+  });
+
+  test('execução falhada sem notificações de erro dá o motivo sem detalhes', () => {
+    const text = log([invoked([{
+      executionSuccessful: false,
+      toolExecutionNotifications: [{ level: 'warning', message: { text: 'lento' } }],
+    }])]);
+    assert.throws(() => count(text), (error) => error.params.reason.params.details === '');
+  });
+
+  test('junta as notificações de erro de configuração e de execução, sem repetidos', () => {
+    const notification = { level: 'error', message: { text: 'sem memória' } };
+    const text = log([invoked([{
+      executionSuccessful: false,
+      toolConfigurationNotifications: [notification, { message: { text: 'aviso' } }],
+      toolExecutionNotifications: [notification, { level: 'error', message: { text: 'abortou' } }],
+    }])]);
+    assert.throws(() => count(text), (error) => (
+      error.params.reason.params.details === 'sem memória; abortou'));
+  });
+
+  test('o motivo da execução falhada indica o run', () => {
+    const text = log([invoked([{ executionSuccessful: true }]), invoked([{
+      executionSuccessful: false,
+    }])]);
+    assert.throws(() => count(text), (error) => error.params.reason.params.run === 'runs[1]');
+  });
+
+  test('execução com sucesso e notificações de erro (Semgrep) conta os resultados', () => {
+    const text = log([invoked([{
+      executionSuccessful: true,
+      toolExecutionNotifications: [{ level: 'error', message: { text: 'Syntax error' } }],
+    }])]);
+    assert.equal(count(text), 1);
+  });
+
+  test('run sem invocations (ruff) conta os resultados', () => {
+    assert.equal(count(log([run('ruff', [result('F401', 'error')])])), 1);
+  });
+
+  test('SARIF 1.0.0 (ErrorLog do C# por omissão) dá extractor_report_unparseable', () => {
+    assert.throws(() => count(ROSLYN_V1), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_sarif_version', params: { version: '1.0.0' } },
+      },
+    });
+  });
+
+  test('SARIF 2.0.0 dá extractor_report_unparseable', () => {
+    const text = JSON.stringify({ version: '2.0.0', runs: [run('x', [])] });
+    assert.throws(() => count(text), (error) => (
+      error.params.reason.code === 'reason_sarif_version'));
+  });
+
+  test('registo sem version dá extractor_report_unparseable e não extractor_report_empty', () => {
+    assert.throws(() => count('{"runs":[]}'), {
+      ...UNPARSEABLE,
+      params: { format: FORMAT, reason: { code: 'reason_sarif_version_missing', params: {} } },
+    });
+  });
+
+  test('os mesmos diagnósticos em SARIF 2.1.0 com suppressions contam só o activo', () => {
+    const results = [
+      result('CA1822', 'warning'),
+      result('CS0168', 'warning', [{ kind: 'inSource' }]),
+      result('CA2007', 'warning', [{ kind: 'inSource' }]),
+    ];
+    assert.equal(count(log([run('csc', results)])), 1);
   });
 
   test('JSON inválido dá extractor_report_unparseable', () => {
@@ -298,7 +456,11 @@ describe('sarif', () => {
   test('nível desconhecido em levels dá extractor_option_invalid', () => {
     assert.throws(() => count(REPORT, { levels: ['error', 'info'] }), {
       ...LEVELS_INVALID,
-      params: { format: FORMAT, option: 'levels', reason: 'unknown level "info"' },
+      params: {
+        format: FORMAT,
+        option: 'levels',
+        reason: { code: 'reason_level_unknown', params: { level: 'info' } },
+      },
     });
   });
 

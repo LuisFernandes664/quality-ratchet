@@ -115,14 +115,17 @@ describe('eslint', () => {
   test('documento que não é array dá extractor_report_unparseable', () => {
     assert.throws(() => run('{"errorCount":1,"warningCount":0}'), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'expected an array of file results' },
+      params: { format: FORMAT, reason: { code: 'reason_eslint_not_array', params: {} } },
     });
   });
 
   test('ficheiro sem errorCount dá extractor_report_unparseable', () => {
     assert.throws(() => run('[{"filePath":"/a.js","messages":[],"warningCount":0}]'), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'missing "errorCount"' },
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_key_missing', params: { path: 'errorCount' } },
+      },
     });
   });
 

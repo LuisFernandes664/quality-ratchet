@@ -109,12 +109,76 @@ describe('cobertura', () => {
     assert.equal(run(COVERAGE_PY), 80);
   });
 
-  test('lines lê line-rate da raiz x 100', () => {
+  test('lines calcula lines-covered/lines-valid da raiz em percentagem', () => {
     assert.equal(run(COVERAGE_PY, 'lines'), 80);
   });
 
-  test('branches lê branch-rate da raiz x 100', () => {
+  test('branches calcula branches-covered/branches-valid da raiz em percentagem', () => {
     assert.equal(run(COVERAGE_PY, 'branches'), 75);
+  });
+
+  test('não usa o line-rate arredondado para 1 pelo coverage.py com uma linha por cobrir', () => {
+    const text = COVERAGE_PY.replace(
+      'lines-valid="120" lines-covered="96" line-rate="0.8"',
+      'lines-valid="20003" lines-covered="20002" line-rate="1"',
+    );
+    assert.equal(run(text, 'lines'), (20002 * 100) / 20003);
+  });
+
+  test('lines é exacto e não o line-rate de 4 algarismos (10/11 e não 90.91)', () => {
+    const text = withRoot('lines-valid="11" lines-covered="10" line-rate="0.9091" branch-rate="0"');
+    assert.equal(run(text, 'lines'), 1000 / 11);
+  });
+
+  test('branches é exacto e não o branch-rate de 4 algarismos (2/3 e não 66.67)', () => {
+    const text = withRoot('line-rate="1" branches-valid="3" branches-covered="2" '
+      + 'branch-rate="0.6667"');
+    assert.equal(run(text, 'branches'), 200 / 3);
+  });
+
+  test('usa line-rate quando só existe lines-valid, sem lines-covered', () => {
+    assert.equal(run(withRoot('lines-valid="11" line-rate="0.9091"')), 90.91);
+  });
+
+  test('usa line-rate quando só existe lines-covered, sem lines-valid', () => {
+    assert.equal(run(withRoot('lines-covered="10" line-rate="0.9091"')), 90.91);
+  });
+
+  test('lines-covered maior do que lines-valid dá extractor_report_unparseable', () => {
+    assert.throws(() => run(withRoot('lines-valid="10" lines-covered="12" line-rate="1"')), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_hit_exceeds_total', params: { hit: 12, total: 10 } },
+      },
+    });
+  });
+
+  test('lines-covered fraccionário dá extractor_report_unparseable', () => {
+    assert.throws(() => run(withRoot('lines-valid="10" lines-covered="9.5" line-rate="0.95"')), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: {
+          code: 'reason_attribute_not_count',
+          params: { name: 'lines-covered', value: '9.5' },
+        },
+      },
+    });
+  });
+
+  test('lines-covered negativo dá extractor_report_unparseable', () => {
+    const text = withRoot('lines-valid="10" lines-covered="-1" line-rate="0"');
+    assert.throws(() => run(text), (error) => (
+      error.code === 'extractor_report_unparseable'
+      && error.params.reason.code === 'reason_attribute_not_count'));
+  });
+
+  test('lines-valid que não é número dá extractor_report_unparseable', () => {
+    const text = withRoot('lines-valid="muitas" lines-covered="3" line-rate="0.3"');
+    assert.throws(() => run(text), (error) => (
+      error.params.reason.code === 'reason_attribute_not_count'
+      && error.params.reason.params.name === 'lines-valid'));
   });
 
   test('ignora declaração XML, DOCTYPE e comentários antes da raiz', () => {
@@ -153,19 +217,37 @@ describe('cobertura', () => {
     ].join('');
     assert.throws(() => run(jacoco), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'root element is <report>, expected <coverage>' },
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_xml_root', params: { found: 'report', expected: 'coverage' } },
+      },
     });
   });
 
   test('atributo em falta dá extractor_report_unparseable', () => {
     assert.throws(() => run(withRoot('line-rate="0.9"'), 'branches'), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'missing attribute "branch-rate" on <coverage>' },
+      params: {
+        format: FORMAT,
+        reason: {
+          code: 'reason_attribute_missing',
+          params: { name: 'branch-rate', element: 'coverage' },
+        },
+      },
     });
   });
 
   test('taxa não numérica dá extractor_report_unparseable', () => {
-    assert.throws(() => run(withRoot('lines-valid="10" line-rate="NaN"')), UNPARSEABLE);
+    assert.throws(() => run(withRoot('lines-valid="10" line-rate="NaN"')), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: {
+          code: 'reason_attribute_not_number',
+          params: { name: 'line-rate', value: 'NaN' },
+        },
+      },
+    });
   });
 
   test('taxa não finita dá extractor_report_unparseable', () => {
@@ -175,7 +257,13 @@ describe('cobertura', () => {
   test('taxa maior do que 1 dá extractor_report_unparseable', () => {
     assert.throws(() => run(withRoot('line-rate="80"')), {
       ...UNPARSEABLE,
-      params: { format: FORMAT, reason: 'attribute "line-rate" is not between 0 and 1: "80"' },
+      params: {
+        format: FORMAT,
+        reason: {
+          code: 'reason_attribute_out_of_range',
+          params: { name: 'line-rate', value: '80', min: 0, max: 1 },
+        },
+      },
     });
   });
 
@@ -188,7 +276,10 @@ describe('cobertura', () => {
   });
 
   test('texto sem elementos XML dá extractor_report_unparseable', () => {
-    assert.throws(() => run('line-rate=0.8'), UNPARSEABLE);
+    assert.throws(() => run('line-rate=0.8'), {
+      ...UNPARSEABLE,
+      params: { format: FORMAT, reason: { code: 'reason_xml_no_element', params: {} } },
+    });
   });
 
   test('campo desconhecido dá extractor_field_unknown', () => {

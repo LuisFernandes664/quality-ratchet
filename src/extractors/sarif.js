@@ -2,10 +2,14 @@
 /**
  * Extractor de relatórios SARIF 2.1.0 (CodeQL, Semgrep, ESLint, Trivy, ...). Conta os
  * resultados activos e não suprimidos de todos os runs, opcionalmente filtrados por nível.
+ * Rejeita outras versões do SARIF (a 1.0.0 marca as supressões de outra forma) e os runs em
+ * que a própria ferramenta declara que a execução falhou, porque nesse caso os resultados
+ * estão incompletos (ex: o ESLint não analisa um ficheiro com erro de sintaxe).
  */
 
 import { isPlainObject } from '../core/guards.js';
 import {
+  because,
   defineExtractor,
   invalidOption,
   parseJson,
@@ -18,6 +22,12 @@ import {
 /** @typedef {Record<string, unknown>} SarifObject */
 
 const FORMAT = 'sarif';
+
+/** Única versão do SARIF suportada. */
+const SUPPORTED_VERSION = '2.1.0';
+
+/** Listas de notificações de uma invocação que podem explicar uma execução falhada. */
+const NOTIFICATION_LISTS = ['toolConfigurationNotifications', 'toolExecutionNotifications'];
 
 /** Níveis de resultado definidos pela especificação SARIF. */
 const LEVELS = ['error', 'warning', 'note', 'none'];
@@ -41,16 +51,34 @@ export const sarifExtractor = defineExtractor({
 
 /**
  * Conta os resultados activos cujo nível está em `source.levels` (todos, se omitido).
+ * Só aceita SARIF 2.1.0, e cada run tem de ter corrido com sucesso.
  * @param {string} text
  * @param {ReadRequest} request
  * @returns {number}
  */
 function readSarif(text, request) {
   const levels = parseLevels(request.source.levels);
-  const runs = readPath(parseJson(text, FORMAT), ['runs'], FORMAT);
-  if (!Array.isArray(runs)) throw unparseable(FORMAT, '"runs" is not an array');
+  const log = parseJson(text, FORMAT);
+  checkVersion(log);
+  const runs = readPath(log, ['runs'], FORMAT);
+  if (!Array.isArray(runs)) {
+    throw unparseable(FORMAT, because('reason_not_array', { path: 'runs' }));
+  }
   if (runs.length === 0) throw reportEmpty(FORMAT);
   return runs.reduce((total, run, index) => total + countRun(run, index, levels), 0);
+}
+
+/**
+ * Exige a versão 2.1.0. O SARIF 1.0.0 (ex: o ErrorLog do compilador C# por omissão) marca
+ * os diagnósticos suprimidos com `suppressionStates`, que esta versão não conhece: contá-los
+ * como activos daria um valor errado sem nenhum aviso.
+ * @param {unknown} log documento SARIF já interpretado
+ * @returns {void}
+ */
+function checkVersion(log) {
+  if (!isPlainObject(log) || log.version === SUPPORTED_VERSION) return;
+  if (log.version === undefined) throw unparseable(FORMAT, because('reason_sarif_version_missing'));
+  throw unparseable(FORMAT, because('reason_sarif_version', { version: String(log.version) }));
 }
 
 /**
@@ -61,11 +89,15 @@ function readSarif(text, request) {
 function parseLevels(levels) {
   if (levels === undefined) return null;
   if (!Array.isArray(levels) || levels.length === 0) {
-    throw invalidOption(FORMAT, 'levels', `must be a non-empty array of ${LEVELS.join(', ')}`);
+    throw invalidOption(FORMAT, 'levels', because('reason_levels_invalid', {
+      known: LEVELS.join(', '),
+    }));
   }
   const unknown = levels.find((level) => !LEVELS.includes(level));
   if (unknown !== undefined) {
-    throw invalidOption(FORMAT, 'levels', `unknown level "${String(unknown)}"`);
+    throw invalidOption(FORMAT, 'levels', because('reason_level_unknown', {
+      level: String(unknown),
+    }));
   }
   return levels;
 }
@@ -78,7 +110,10 @@ function parseLevels(levels) {
  * @returns {number}
  */
 function countRun(run, index, levels) {
-  if (!isPlainObject(run)) throw unparseable(FORMAT, `"runs[${index}]" is not an object`);
+  if (!isPlainObject(run)) {
+    throw unparseable(FORMAT, because('reason_not_object', { path: `runs[${index}]` }));
+  }
+  rejectFailedExecution(run, index);
   return runResults(run, index)
     .filter((result) => isActive(result))
     .filter((result) => levels === null || levels.includes(effectiveLevel(result, run)))
@@ -96,9 +131,54 @@ function runResults(run, index) {
   const results = run.results ?? [];
   const valid = Array.isArray(results) && results.every((result) => isPlainObject(result));
   if (!valid) {
-    throw unparseable(FORMAT, `"runs[${index}].results" is not an array of objects`);
+    const path = `runs[${index}].results`;
+    throw unparseable(FORMAT, because('reason_not_array_of_objects', { path }));
   }
   return results;
+}
+
+/**
+ * Rejeita um run cuja ferramenta declara `invocations[].executionSuccessful: false`. O
+ * formatador SARIF do ESLint, por exemplo, não escreve resultados para um ficheiro com erro
+ * de sintaxe: põe o erro nas notificações e marca a execução como falhada. Contar só os
+ * resultados daria uma descida falsa. Sem `invocations`, ou com `true`, o run é aceite.
+ * @param {SarifObject} run
+ * @param {number} index
+ * @returns {void}
+ */
+function rejectFailedExecution(run, index) {
+  const invocations = Array.isArray(run.invocations) ? run.invocations : [];
+  const failed = invocations.filter((invocation) => isPlainObject(invocation)
+    && invocation.executionSuccessful === false);
+  if (failed.length === 0) return;
+  const details = [...new Set(failed.flatMap(errorNotifications))].join('; ');
+  throw unparseable(FORMAT, because('reason_sarif_execution_failed', {
+    run: `runs[${index}]`,
+    details,
+  }));
+}
+
+/**
+ * Textos das notificações de nível "error" de uma invocação.
+ * @param {SarifObject} invocation
+ * @returns {string[]}
+ */
+function errorNotifications(invocation) {
+  return NOTIFICATION_LISTS
+    .flatMap((key) => (Array.isArray(invocation[key]) ? invocation[key] : []))
+    .filter((notification) => isPlainObject(notification) && notification.level === 'error')
+    .map((notification) => messageText(notification.message))
+    .filter((text) => text !== '');
+}
+
+/**
+ * Texto de uma mensagem SARIF (`message.text`), sem espaços nas pontas.
+ * @param {unknown} message
+ * @returns {string}
+ */
+function messageText(message) {
+  const text = isPlainObject(message) ? message.text : undefined;
+  return typeof text === 'string' ? text.trim() : '';
 }
 
 /**

@@ -1,12 +1,14 @@
 // @ts-check
 /**
- * Utilitários comuns aos extractors de relatórios: construção de extractors, leitura de JSON,
- * percentagens, JSON Pointer (RFC 6901) e contagem de elementos XML.
+ * Utilitários comuns aos extractors de relatórios: construção de extractors, erros com motivo
+ * do catálogo de mensagens, leitura de JSON, percentagens, JSON Pointer (RFC 6901) e
+ * contagem de elementos XML.
  */
 
 import { ExtractorError } from '../core/errors.js';
 import { isFiniteNumber, isPlainObject } from '../core/guards.js';
 
+/** @typedef {import('../core/types.js').Issue} Issue */
 /** @typedef {import('../core/types.js').MetricSource} MetricSource */
 
 /**
@@ -52,6 +54,47 @@ const REGEXP_SPECIAL = /[\\^$.*+?()[\]{}|]/g;
 
 /** Marca de ordem de bytes (BOM) que alguns editores e ferramentas escrevem no início. */
 const BYTE_ORDER_MARK = /^\uFEFF/;
+
+/**
+ * Códigos do catálogo de mensagens usados como motivo (`reason`) dos erros dos extractors.
+ * O motivo é um Issue traduzido pelo catálogo, para que a mensagem final saia inteira na
+ * língua escolhida; só o texto do motor (ex: a mensagem do JSON.parse) segue como string.
+ */
+export const REASON_CODES = Object.freeze([
+  'reason_value_not_finite',
+  'reason_key_missing',
+  'reason_not_number',
+  'reason_not_count',
+  'reason_not_array',
+  'reason_not_object',
+  'reason_not_array_of_objects',
+  'reason_not_string',
+  'reason_not_text',
+  'reason_hit_exceeds_total',
+  'reason_pointer_missing',
+  'reason_pointer_not_string',
+  'reason_pointer_not_absolute',
+  'reason_pointer_bad_escape',
+  'reason_pointer_not_found',
+  'reason_pointer_not_numeric',
+  'reason_xml_no_element',
+  'reason_xml_root',
+  'reason_attribute_missing',
+  'reason_attribute_not_number',
+  'reason_attribute_not_count',
+  'reason_attribute_out_of_range',
+  'reason_junit_no_suite',
+  'reason_lcov_no_record',
+  'reason_lcov_invalid_value',
+  'reason_levels_invalid',
+  'reason_level_unknown',
+  'reason_sarif_version',
+  'reason_sarif_version_missing',
+  'reason_sarif_execution_failed',
+  'reason_eslint_not_array',
+  'reason_npm_audit_failed',
+  'reason_mutant_status_unknown',
+]);
 
 /**
  * Constrói um extractor imutável que valida o texto e o campo e garante um valor finito.
@@ -101,13 +144,25 @@ export function resolveField(extractor, source) {
  */
 export function ensureFinite(value, format) {
   if (isFiniteNumber(value)) return value;
-  throw unparseable(format, `extracted value is not a finite number: ${String(value)}`);
+  throw unparseable(format, because('reason_value_not_finite', { value: String(value) }));
+}
+
+/**
+ * Cria o motivo de um erro, identificado por um código do catálogo de mensagens
+ * (ver REASON_CODES).
+ * @param {string} code
+ * @param {Record<string, unknown>} [params]
+ * @returns {Issue}
+ */
+export function because(code, params = {}) {
+  return { code, params };
 }
 
 /**
  * Cria o erro de relatório impossível de interpretar.
  * @param {string} format
- * @param {string} reason motivo técnico, curto
+ * @param {Issue|string} reason motivo: um Issue do catálogo ou, só para texto do motor
+ *   (ex: JSON.parse), a mensagem original
  * @returns {ExtractorError}
  */
 export function unparseable(format, reason) {
@@ -127,7 +182,7 @@ export function reportEmpty(format) {
  * Cria o erro de opção da origem inválida.
  * @param {string} format
  * @param {string} option nome da opção em `source` (ex: 'pointer')
- * @param {string} reason
+ * @param {Issue} reason
  * @returns {ExtractorError}
  */
 export function invalidOption(format, option, reason) {
@@ -180,7 +235,7 @@ export function readPath(document, path, format) {
   let current = document;
   for (const key of path) {
     if (!isPlainObject(current) || !Object.hasOwn(current, key)) {
-      throw unparseable(format, `missing "${path.join('.')}"`);
+      throw unparseable(format, because('reason_key_missing', { path: path.join('.') }));
     }
     current = current[key];
   }
@@ -198,7 +253,7 @@ export function readPath(document, path, format) {
 export function readNumber(document, path, format) {
   const value = readPath(document, path, format);
   if (isFiniteNumber(value)) return value;
-  throw unparseable(format, `"${path.join('.')}" is not a finite number`);
+  throw unparseable(format, because('reason_not_number', { path: path.join('.') }));
 }
 
 /**
@@ -211,8 +266,17 @@ export function readNumber(document, path, format) {
  */
 export function readCount(document, path, format) {
   const value = readPath(document, path, format);
-  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
-  throw unparseable(format, `"${path.join('.')}" is not a non-negative integer`);
+  if (isCount(value)) return value;
+  throw unparseable(format, because('reason_not_count', { path: path.join('.') }));
+}
+
+/**
+ * Indica se o valor é uma contagem: um inteiro seguro não negativo.
+ * @param {unknown} value
+ * @returns {value is number}
+ */
+export function isCount(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 /**
@@ -228,7 +292,7 @@ export function readCount(document, path, format) {
  */
 export function percentage(hit, total, format) {
   if (total === 0) throw reportEmpty(format);
-  if (hit > total) throw unparseable(format, `hit count ${hit} exceeds total ${total}`);
+  if (hit > total) throw unparseable(format, because('reason_hit_exceeds_total', { hit, total }));
   return (hit * 100) / total;
 }
 
@@ -250,14 +314,16 @@ export function parseStrictNumber(text) {
  */
 export function parsePointer(pointer, format) {
   if (pointer === undefined || pointer === null) {
-    throw invalidOption(format, 'pointer', 'missing');
+    throw invalidOption(format, 'pointer', because('reason_pointer_missing'));
   }
-  if (typeof pointer !== 'string') throw invalidOption(format, 'pointer', 'must be a string');
+  if (typeof pointer !== 'string') {
+    throw invalidOption(format, 'pointer', because('reason_pointer_not_string'));
+  }
   if (pointer !== '' && !pointer.startsWith('/')) {
-    throw invalidOption(format, 'pointer', `"${pointer}" must be empty or start with "/"`);
+    throw invalidOption(format, 'pointer', because('reason_pointer_not_absolute', { pointer }));
   }
   if (/~(?![01])/.test(pointer)) {
-    throw invalidOption(format, 'pointer', `"${pointer}" has "~" not followed by "0" or "1"`);
+    throw invalidOption(format, 'pointer', because('reason_pointer_bad_escape', { pointer }));
   }
   return pointer === '' ? [] : pointer.slice(1).split('/').map(unescapeToken);
 }
@@ -335,5 +401,5 @@ export function countTags(xml, name) {
  */
 function requireText(text, format) {
   if (typeof text === 'string') return text;
-  throw unparseable(format, 'report content is not text');
+  throw unparseable(format, because('reason_not_text'));
 }
