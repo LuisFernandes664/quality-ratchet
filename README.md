@@ -794,6 +794,11 @@ only when that release is the highest `2.x.y`. A pre-release never moves it, and
 does a patch for an older minor (such as 2.0.1 published after 2.1.0). Breaking changes
 only ship in a new major. See the [changelog](CHANGELOG.md).
 
+To publish, run the Release workflow by hand on `main` (Actions, Release, Run workflow): it
+creates the `vX.Y.Z` release for the version in `package.json`, with the notes of its
+changelog entry, and moves the major tag. The Marketplace listing is ticked when editing
+that release on GitHub.
+
 For supply chain safety, pin the full commit SHA instead of the tag, and let Dependabot or
 Renovate propose updates:
 
