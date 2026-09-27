@@ -110,6 +110,30 @@ describe('runCli', () => {
     assert.match(result.stderr, /^error: comando desconhecido "deploy"/);
   });
 
+  test('opcao desconhecida sai na lingua pedida', async () => {
+    const result = await runIn(dir, ['--language', 'pt', '--foo']);
+
+    assert.match(result.stderr, /^error: opções inválidas: .*--foo/);
+  });
+
+  test('opcao de texto sem valor sai na lingua pedida', async () => {
+    const result = await runIn(dir, ['check', '--language', 'pt', '--baseline']);
+
+    assert.match(result.stderr, /^error: opções inválidas: .*--baseline/);
+  });
+
+  test('--language=pt tambem traduz os erros das opcoes', async () => {
+    const result = await runIn(dir, ['--language=pt', '--nope']);
+
+    assert.match(result.stderr, /^error: opções inválidas: .*--nope/);
+  });
+
+  test('erro das opcoes com lingua nao suportada sai em ingles', async () => {
+    const result = await runIn(dir, ['--language', 'fr', '--foo']);
+
+    assert.match(result.stderr, /^error: invalid options: .*--foo/);
+  });
+
   test('sem comando corre o check', async () => {
     await writeFiles(dir, {
       'quality-baseline.json': baselineV2({ a: { value: 1, direction: 'up' } }),

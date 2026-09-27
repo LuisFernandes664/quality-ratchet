@@ -19,7 +19,7 @@ export const OUTPUT_FORMATS = Object.freeze(['markdown', 'json']);
 
 /** Schema JSON do baseline v2, gravado em `$schema` pelos comandos `init` e `migrate`. */
 export const SCHEMA_URL = 'https://raw.githubusercontent.com/LuisFernandes664/quality-ratchet/'
-  + 'v1/schema/baseline.v2.schema.json';
+  + 'v2/schema/baseline.v2.schema.json';
 
 /** Códigos de saída do processo. */
 export const EXIT = Object.freeze({

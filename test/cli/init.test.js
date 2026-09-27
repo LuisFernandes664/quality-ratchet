@@ -161,4 +161,36 @@ describe('init', () => {
 
     assert.equal(result.code, 0);
   });
+
+  describe('caminhos vazios', () => {
+    test('--output vazio diz que o valor e obrigatorio', async () => {
+      const argv = ['init', '--metrics', 'm.json', '--up', 'coverage', '--output='];
+
+      assert.equal((await runIn(dir, argv)).stderr, 'error: "--output" is required');
+    });
+
+    test('--output vazio com --force diz que o valor e obrigatorio', async () => {
+      const argv = ['init', '--metrics', 'm.json', '--up', 'coverage', '--output=', '--force'];
+
+      assert.equal((await runIn(dir, argv)).stderr, 'error: "--output" is required');
+    });
+
+    test('--output vazio sai com 2', async () => {
+      const argv = ['init', '--metrics', 'm.json', '--up', 'coverage', '--output='];
+
+      assert.equal((await runIn(dir, argv)).code, 2);
+    });
+
+    test('--metrics vazio diz que o valor e obrigatorio', async () => {
+      const result = await runIn(dir, ['init', '--metrics=', '--up', 'coverage']);
+
+      assert.equal(result.stderr, 'error: "--metrics" is required');
+    });
+
+    test('--metrics so com espacos diz que o valor e obrigatorio', async () => {
+      const result = await runIn(dir, ['init', '--metrics', '  ', '--up', 'coverage']);
+
+      assert.equal(result.stderr, 'error: "--metrics" is required');
+    });
+  });
 });

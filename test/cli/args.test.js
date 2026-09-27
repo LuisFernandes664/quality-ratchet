@@ -6,6 +6,8 @@ import {
   COMMAND_OPTIONS,
   flagOption,
   listOption,
+  nonEmptyOption,
+  peekLanguage,
   readCommandOptions,
   splitCommand,
   stringOption,
@@ -39,6 +41,32 @@ describe('splitCommand', () => {
       () => splitCommand(['--nope']),
       (error) => error instanceof ConfigError && error.code === 'cli_option_invalid',
     );
+  });
+});
+
+describe('peekLanguage', () => {
+  test('le a lingua mesmo com opcoes invalidas', () => {
+    assert.equal(peekLanguage(['--nope', '--language', 'pt']), 'pt');
+  });
+
+  test('le a lingua na forma --language=<valor>', () => {
+    assert.equal(peekLanguage(['--language=pt', '--nope']), 'pt');
+  });
+
+  test('o valor de outra opcao nao passa por lingua', () => {
+    assert.equal(peekLanguage(['--title', '--language']), undefined);
+  });
+
+  test('sem --language devolve undefined', () => {
+    assert.equal(peekLanguage([]), undefined);
+  });
+
+  test('--language sem valor devolve undefined', () => {
+    assert.equal(peekLanguage(['--language']), undefined);
+  });
+
+  test('opcao de texto sem valor nao lanca excepcao', () => {
+    assert.doesNotThrow(() => peekLanguage(['--baseline']));
   });
 });
 
@@ -77,6 +105,29 @@ describe('leitura de valores', () => {
 
   test('stringOption usa o valor por omissao quando a opcao falta', () => {
     assert.equal(stringOption({}, 'name', 'x'), 'x');
+  });
+
+  test('nonEmptyOption usa o valor por omissao quando a opcao falta', () => {
+    assert.equal(nonEmptyOption({}, 'output', 'x.json'), 'x.json');
+  });
+
+  test('nonEmptyOption devolve o valor dado sem o alterar', () => {
+    assert.equal(nonEmptyOption({ output: ' a b.json' }, 'output', 'x.json'), ' a b.json');
+  });
+
+  test('nonEmptyOption rejeita um valor vazio com config_input_required', () => {
+    assert.throws(
+      () => nonEmptyOption({ output: '' }, 'output', 'x.json'),
+      (error) => error instanceof ConfigError && error.code === 'config_input_required'
+        && error.params.input === '--output',
+    );
+  });
+
+  test('nonEmptyOption rejeita um valor so com espacos', () => {
+    assert.throws(
+      () => nonEmptyOption({ output: '  ' }, 'output', 'x.json'),
+      (error) => error instanceof ConfigError && error.code === 'config_input_required',
+    );
   });
 
   test('flagOption so e verdadeiro para true', () => {

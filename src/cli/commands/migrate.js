@@ -5,7 +5,7 @@
  */
 import { migrateToV2, serializeBaseline } from '../../core/baseline.js';
 import { loadBaseline } from '../../run.js';
-import { stringOption } from '../args.js';
+import { nonEmptyOption } from '../args.js';
 import { logIssues, writeJson } from '../context.js';
 import { DEFAULTS, EXIT, SCHEMA_URL } from '../defaults.js';
 
@@ -20,8 +20,8 @@ import { DEFAULTS, EXIT, SCHEMA_URL } from '../defaults.js';
  * @returns {Promise<number>}
  */
 export async function runMigrate(ctx, values) {
-  const baselinePath = stringOption(values, 'baseline', DEFAULTS.baseline);
-  const output = stringOption(values, 'output', baselinePath);
+  const baselinePath = nonEmptyOption(values, 'baseline', DEFAULTS.baseline);
+  const output = nonEmptyOption(values, 'output', baselinePath);
   const head = await loadBaseline(ctx.fs, baselinePath, { allowEmptyValues: true });
   const others = head.warnings.filter((issue) => issue.code !== 'metric_without_rule');
   logIssues(ctx, 'warning', others);

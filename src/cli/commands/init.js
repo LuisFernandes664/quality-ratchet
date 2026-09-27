@@ -7,7 +7,7 @@ import { parseBaseline, serializeBaseline } from '../../core/baseline.js';
 import { ConfigError, MetricsError } from '../../core/errors.js';
 import { parseMetricsFile, toNumber } from '../../core/measurements.js';
 import { readJsonFile } from '../../run.js';
-import { flagOption, listOption, stringOption } from '../args.js';
+import { flagOption, listOption, nonEmptyOption } from '../args.js';
 import { writeJson } from '../context.js';
 import { DEFAULTS, EXIT, SCHEMA_URL } from '../defaults.js';
 
@@ -23,11 +23,14 @@ import { DEFAULTS, EXIT, SCHEMA_URL } from '../defaults.js';
  * @param {CommandContext} ctx
  * @param {OptionValues} values
  * @returns {Promise<number>}
+ * @throws {ConfigError} config_input_required quando `--metrics` falta ou um caminho é vazio
  */
 export async function runInit(ctx, values) {
-  const metricsPath = stringOption(values, 'metrics', undefined);
-  if (!metricsPath) throw new ConfigError('config_input_required', { input: '--metrics' });
-  const output = stringOption(values, 'output', DEFAULTS.baseline);
+  const metricsPath = nonEmptyOption(values, 'metrics', undefined);
+  if (metricsPath === undefined) {
+    throw new ConfigError('config_input_required', { input: '--metrics' });
+  }
+  const output = nonEmptyOption(values, 'output', DEFAULTS.baseline);
   const selection = readSelection(values);
   await ensureWritable(ctx, output, flagOption(values, 'force'));
   const raw = await readJsonFile(ctx.fs, metricsPath, MetricsError);

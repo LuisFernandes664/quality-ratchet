@@ -115,4 +115,30 @@ describe('migrate', () => {
     assert.equal(result.code, 2);
     assert.match(result.stderr, /^error: The baseline is invalid/);
   });
+
+  describe('caminhos vazios', () => {
+    beforeEach(async () => {
+      await writeFiles(dir, { 'quality-baseline.json': BASELINE_V1 });
+    });
+
+    for (const option of ['--output', '--baseline']) {
+      test(`${option} vazio sai com 2`, async () => {
+        assert.equal((await runIn(dir, ['migrate', `${option}=`])).code, 2);
+      });
+
+      test(`${option} vazio diz que o valor e obrigatorio`, async () => {
+        const result = await runIn(dir, ['migrate', `${option}=`]);
+
+        assert.equal(result.stderr, `error: "${option}" is required`);
+      });
+    }
+
+    test('--output vazio nao altera o baseline', async () => {
+      const before = await readText(dir, 'quality-baseline.json');
+
+      await runIn(dir, ['migrate', '--output=']);
+
+      assert.equal(await readText(dir, 'quality-baseline.json'), before);
+    });
+  });
 });

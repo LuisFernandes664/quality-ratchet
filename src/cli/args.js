@@ -98,6 +98,23 @@ export function splitCommand(argv) {
 }
 
 /**
+ * Língua pedida em `--language`, lida sem validar os argumentos, para que os erros das
+ * próprias opções saiam na língua pedida. A leitura usa as opções de todos os comandos, como
+ * a leitura estrita, para que o valor de outra opção (ex: `--title pt`) não passe por língua.
+ * @param {string[]} argv argumentos sem o executável nem o script
+ * @returns {string|undefined} a língua pedida, ou undefined quando não foi dada
+ */
+export function peekLanguage(argv) {
+  const { values } = parseArgs({
+    args: argv,
+    options: ALL_OPTIONS,
+    strict: false,
+    allowPositionals: true,
+  });
+  return typeof values.language === 'string' ? values.language : undefined;
+}
+
+/**
  * Valida o comando e lê as suas opções, rejeitando as que pertencem a outros comandos.
  * @param {string} command
  * @param {string[]} args argumentos sem o comando
@@ -140,7 +157,7 @@ function isParseError(cause) {
 
 /**
  * Valor de uma opção de texto, ou o valor por omissão. Um texto vazio explícito é mantido
- * (ex: `--bypass-label ""` desliga o perdão).
+ * (ex: `--bypass-label ""` desliga o perdão); para caminhos usar `nonEmptyOption`.
  * @template {string|undefined} F
  * @param {OptionValues} values
  * @param {string} name
@@ -150,6 +167,26 @@ function isParseError(cause) {
 export function stringOption(values, name, fallback) {
   const value = values[name];
   return typeof value === 'string' ? value : fallback;
+}
+
+/**
+ * Valor de uma opção que não pode ficar vazia (caminhos e revisão git), ou o valor por
+ * omissão quando a opção não foi dada. Um valor vazio ou só com espaços vem quase sempre de
+ * uma variável de CI por definir: seguir com ele leria a pasta de trabalho como ficheiro,
+ * criaria um ficheiro com nome de espaços, ou ignoraria o pedido em silêncio (ex:
+ * `--write-baseline ""` num job de lock-in ficaria verde sem escrever nada).
+ * @template {string|undefined} F
+ * @param {OptionValues} values
+ * @param {string} name
+ * @param {F} fallback
+ * @returns {string|F}
+ * @throws {ConfigError} config_input_required
+ */
+export function nonEmptyOption(values, name, fallback) {
+  const value = stringOption(values, name, undefined);
+  if (value === undefined) return fallback;
+  if (value.trim() !== '') return value;
+  throw new ConfigError('config_input_required', { input: `--${name}` });
 }
 
 /**

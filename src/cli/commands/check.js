@@ -9,7 +9,7 @@ import { describeError } from '../../core/messages.js';
 import { runRatchet } from '../../core/ratchet.js';
 import { renderSummary, reportLogEntries } from '../../core/summary.js';
 import { collectMeasurements, loadBaseline, parseJsonText } from '../../run.js';
-import { flagOption, listOption, stringOption } from '../args.js';
+import { flagOption, listOption, nonEmptyOption, stringOption } from '../args.js';
 import { baselineDir, logIssues, warnUntracked, writeJson } from '../context.js';
 import { DEFAULTS, EXIT, OUTPUT_FORMATS } from '../defaults.js';
 
@@ -72,15 +72,19 @@ function logReport(ctx, report) {
 }
 
 /**
- * Lê as opções do comando, com os valores por omissão partilhados com a action.
+ * Lê as opções do comando, com os valores por omissão partilhados com a action. Os caminhos
+ * e a revisão não aceitam valores vazios: um `--base-ref` vazio (ex: variável de CI por
+ * definir fora de um merge request) seguiria sem governação e esconderia que o pedido não
+ * foi cumprido.
  * @param {OptionValues} values
  * @returns {CheckOptions}
+ * @throws {ConfigError} config_input_required ou config_format_unsupported
  */
 function readCheckOptions(values) {
   return {
-    baseline: stringOption(values, 'baseline', DEFAULTS.baseline),
-    metrics: stringOption(values, 'metrics', DEFAULTS.metrics),
-    baseRef: readBaseRef(values),
+    baseline: nonEmptyOption(values, 'baseline', DEFAULTS.baseline),
+    metrics: nonEmptyOption(values, 'metrics', DEFAULTS.metrics),
+    baseRef: nonEmptyOption(values, 'base-ref', undefined),
     title: stringOption(values, 'title', undefined),
     labels: listOption(values, 'labels'),
     bypassLabel: stringOption(values, 'bypass-label', DEFAULTS.bypassLabel),
@@ -89,22 +93,8 @@ function readCheckOptions(values) {
     strict: flagOption(values, 'strict'),
     name: stringOption(values, 'name', ''),
     format: readFormat(values),
-    writeBaseline: stringOption(values, 'write-baseline', undefined),
+    writeBaseline: nonEmptyOption(values, 'write-baseline', undefined),
   };
-}
-
-/**
- * Revisão git do contrato, quando pedida. Um valor vazio (ex: variável de CI por definir
- * fora de um merge request) é erro: sem revisão não há contrato, e seguir sem governação
- * esconderia que o pedido não foi cumprido.
- * @param {OptionValues} values
- * @returns {string|undefined}
- * @throws {ConfigError} config_input_required
- */
-function readBaseRef(values) {
-  const ref = stringOption(values, 'base-ref', undefined);
-  if (ref === undefined || ref.trim() !== '') return ref;
-  throw new ConfigError('config_input_required', { input: '--base-ref' });
 }
 
 /**
@@ -139,7 +129,9 @@ function ratchetSettings(options, frozenAt) {
 /**
  * Baseline da revisão indicada em `--base-ref`, o contrato que o PR não pode afrouxar.
  * Sem `--base-ref` não há governação. Sem baseline nessa revisão (ex: é o PR que o cria),
- * a governação fica desligada nesta execução, com aviso e nota no sumário.
+ * a governação fica desligada nesta execução, com aviso e nota no sumário. As outras
+ * falhas do git (ex: objecto em falta num clone parcial) propagam como erro: a governação
+ * não se desliga em silêncio.
  * @param {CommandContext} ctx
  * @param {CheckOptions} options
  * @returns {Promise<BaseContract>}
@@ -231,7 +223,7 @@ function jsonReport(report) {
  * @returns {Promise<void>}
  */
 async function writeTightened(ctx, report, target) {
-  if (!target || report.tightened.length === 0) return;
+  if (target === undefined || report.tightened.length === 0) return;
   await writeJson(ctx, target, serializeBaseline(report.newBaseline));
   ctx.log('notice', ctx.t('log_baseline_written', { path: target }));
 }

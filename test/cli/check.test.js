@@ -16,6 +16,8 @@ import {
   writeFiles,
 } from './helpers.js';
 
+/** @typedef {import('./helpers.js').CliRun} CliRun */
+
 /** Baseline v2 com uma métrica de cada direcção. */
 const BASELINE = baselineV2({
   coverage: { value: 70, direction: 'up' },
@@ -50,23 +52,44 @@ describe('check', () => {
     return writeFiles(dir, { 'quality-baseline.json': baseline, 'metrics-current.json': metrics });
   }
 
-  test('verde sai com 0 e imprime o sumario em markdown', async () => {
-    await setup(BASELINE, { coverage: 70, lint: 10 });
+  describe('verde', () => {
+    /** @type {CliRun} */
+    let result;
 
-    const result = await runIn(dir, ['check']);
+    beforeEach(async () => {
+      await setup(BASELINE, { coverage: 70, lint: 10 });
+      result = await runIn(dir, ['check']);
+    });
 
-    assert.equal(result.code, 0);
-    assert.match(result.stdout, /^## Quality ratchet\n\n\*\*Ratchet green/);
-    assert.match(result.stderr, /^notice: Ratchet green\.$/m);
+    test('sai com 0', () => {
+      assert.equal(result.code, 0);
+    });
+
+    test('imprime o sumario em markdown', () => {
+      assert.match(result.stdout, /^## Quality ratchet\n\n\*\*Ratchet green/);
+    });
+
+    test('regista a notice no stderr', () => {
+      assert.match(result.stderr, /^notice: Ratchet green\.$/m);
+    });
   });
 
-  test('regressao sai com 1 e regista o erro no stderr', async () => {
-    await setup(BASELINE, { coverage: 65, lint: 10 });
+  describe('regressao', () => {
+    /** @type {CliRun} */
+    let result;
 
-    const result = await runIn(dir, ['check']);
+    beforeEach(async () => {
+      await setup(BASELINE, { coverage: 65, lint: 10 });
+      result = await runIn(dir, ['check']);
+    });
 
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /^error: coverage regressed: 70 -> 65$/m);
+    test('sai com 1', () => {
+      assert.equal(result.code, 1);
+    });
+
+    test('regista o erro no stderr', () => {
+      assert.match(result.stderr, /^error: coverage regressed: 70 -> 65$/m);
+    });
   });
 
   test('metrica em falta no ficheiro de metricas falha', async () => {
@@ -80,8 +103,7 @@ describe('check', () => {
 
     const result = await runIn(dir, ['check']);
 
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /lint regressed: 10 -> 11/);
+    assert.match(result.stderr, /^error: lint regressed: 10 -> 11$/m);
   });
 
   test('--baseline e --metrics sao relativos a pasta de trabalho', async () => {
@@ -104,24 +126,43 @@ describe('check', () => {
 
     const result = await runIn(dir, ['check', '--baseline', 'pkg/quality-baseline.json']);
 
-    assert.equal(result.code, 0);
     assert.match(result.stdout, /`coverage` \| 70 \| 80 \| \+10/);
   });
 
-  test('--format json imprime o relatorio em JSON', async () => {
-    await setup(BASELINE, { coverage: 75, lint: 12 });
+  describe('--format json com regressao e melhoria', () => {
+    /** @type {CliRun} */
+    let result;
+    /** @type {any} */
+    let report;
 
-    const result = await runIn(dir, ['check', '--format', 'json']);
-    const report = JSON.parse(result.stdout);
+    beforeEach(async () => {
+      await setup(BASELINE, { coverage: 75, lint: 12 });
+      result = await runIn(dir, ['check', '--format', 'json']);
+      report = JSON.parse(result.stdout);
+    });
 
-    assert.equal(result.code, 1);
-    assert.deepEqual(
-      Object.keys(report),
-      ['passed', 'ok', 'bypassed', 'results', 'failures', 'loosened', 'tightened', 'newBaseline'],
-    );
-    assert.deepEqual(report.failures.map((/** @type {any} */ row) => row.name), ['lint']);
-    assert.deepEqual(report.tightened, ['coverage']);
-    assert.equal(report.newBaseline.metrics.coverage.value, 75);
+    test('sai com 1', () => {
+      assert.equal(result.code, 1);
+    });
+
+    test('tem as chaves do relatorio pela ordem', () => {
+      assert.deepEqual(
+        Object.keys(report),
+        ['passed', 'ok', 'bypassed', 'results', 'failures', 'loosened', 'tightened', 'newBaseline'],
+      );
+    });
+
+    test('lista as falhas', () => {
+      assert.deepEqual(report.failures.map((/** @type {any} */ row) => row.name), ['lint']);
+    });
+
+    test('lista as metricas apertadas', () => {
+      assert.deepEqual(report.tightened, ['coverage']);
+    });
+
+    test('inclui o baseline apertado', () => {
+      assert.equal(report.newBaseline.metrics.coverage.value, 75);
+    });
   });
 
   test('--format json lista os nomes das metricas afrouxadas', async () => {
@@ -151,29 +192,57 @@ describe('check', () => {
     assert.match(result.stderr, /^warning: Measured but not tracked by the baseline: extra\.$/m);
   });
 
-  test('--format invalido sai com 2', async () => {
-    await setup(BASELINE, { coverage: 70, lint: 10 });
+  describe('--format invalido', () => {
+    /** @type {CliRun} */
+    let result;
 
-    const result = await runIn(dir, ['check', '--format', 'xml']);
+    beforeEach(async () => {
+      await setup(BASELINE, { coverage: 70, lint: 10 });
+      result = await runIn(dir, ['check', '--format', 'xml']);
+    });
 
-    assert.equal(result.code, 2);
-    assert.match(result.stderr, /^error: unsupported format "xml"; use one of: markdown, json$/);
+    test('sai com 2', () => {
+      assert.equal(result.code, 2);
+    });
+
+    test('explica o erro', () => {
+      assert.equal(result.stderr, 'error: unsupported format "xml"; use one of: markdown, json');
+    });
   });
 
-  test('baseline inexistente sai com 2', async () => {
-    const result = await runIn(dir, ['check']);
+  describe('baseline inexistente', () => {
+    /** @type {CliRun} */
+    let result;
 
-    assert.equal(result.code, 2);
-    assert.match(result.stderr, /^error: could not read quality-baseline\.json/);
+    beforeEach(async () => {
+      result = await runIn(dir, ['check']);
+    });
+
+    test('sai com 2', () => {
+      assert.equal(result.code, 2);
+    });
+
+    test('explica o erro', () => {
+      assert.match(result.stderr, /^error: could not read quality-baseline\.json/);
+    });
   });
 
-  test('--language pt traduz o sumario e os logs', async () => {
-    await setup(BASELINE, { coverage: 65, lint: 10 });
+  describe('--language pt', () => {
+    /** @type {CliRun} */
+    let result;
 
-    const result = await runIn(dir, ['check', '--language', 'pt']);
+    beforeEach(async () => {
+      await setup(BASELINE, { coverage: 65, lint: 10 });
+      result = await runIn(dir, ['check', '--language', 'pt']);
+    });
 
-    assert.match(result.stdout, /Catraca vermelha/);
-    assert.match(result.stderr, /^error: coverage regrediu: 70 -> 65$/m);
+    test('traduz o sumario', () => {
+      assert.match(result.stdout, /Catraca vermelha/);
+    });
+
+    test('traduz os logs', () => {
+      assert.match(result.stderr, /^error: coverage regrediu: 70 -> 65$/m);
+    });
   });
 
   test('--name aparece no titulo do sumario', async () => {
@@ -184,13 +253,22 @@ describe('check', () => {
     assert.match(result.stdout, /^## Quality ratchet - api/);
   });
 
-  test('--strict falha com melhorias por fixar', async () => {
-    await setup(BASELINE, { coverage: 75, lint: 10 });
+  describe('--strict com melhorias por fixar', () => {
+    /** @type {CliRun} */
+    let result;
 
-    const result = await runIn(dir, ['check', '--strict']);
+    beforeEach(async () => {
+      await setup(BASELINE, { coverage: 75, lint: 10 });
+      result = await runIn(dir, ['check', '--strict']);
+    });
 
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /coverage improved \(70 -> 75\)/);
+    test('sai com 1', () => {
+      assert.equal(result.code, 1);
+    });
+
+    test('diz que a melhoria esta por fixar', () => {
+      assert.match(result.stderr, /coverage improved \(70 -> 75\)/);
+    });
   });
 
   test('sem --strict as melhorias por fixar passam', async () => {
@@ -199,23 +277,30 @@ describe('check', () => {
     assert.equal((await runIn(dir, ['check'])).code, 0);
   });
 
-  test('--write-baseline escreve o baseline apertado quando ha melhorias', async () => {
-    await setup(BASELINE, { coverage: 75, lint: 10 });
+  describe('--write-baseline com melhorias', () => {
+    /** @type {CliRun} */
+    let result;
 
-    const result = await runIn(dir, ['check', '--write-baseline', 'out/new.json']);
-    const written = await readJson(dir, 'out/new.json');
+    beforeEach(async () => {
+      await setup(BASELINE, { coverage: 75, lint: 10 });
+      result = await runIn(dir, ['check', '--write-baseline', 'out/new.json']);
+    });
 
-    assert.equal(written.metrics.coverage.value, 75);
-    assert.equal(written.frozen_at, TODAY);
-    assert.match(result.stderr, /^notice: Updated baseline written to out\/new\.json\.$/m);
-  });
+    test('grava o valor apertado', async () => {
+      assert.equal((await readJson(dir, 'out/new.json')).metrics.coverage.value, 75);
+    });
 
-  test('--write-baseline termina o ficheiro com fim de linha', async () => {
-    await setup(BASELINE, { coverage: 75, lint: 10 });
+    test('grava a data de hoje em frozen_at', async () => {
+      assert.equal((await readJson(dir, 'out/new.json')).frozen_at, TODAY);
+    });
 
-    await runIn(dir, ['check', '--write-baseline', 'new.json']);
+    test('anuncia o ficheiro escrito', () => {
+      assert.match(result.stderr, /^notice: Updated baseline written to out\/new\.json\.$/m);
+    });
 
-    assert.ok((await readText(dir, 'new.json')).endsWith('}\n'));
+    test('termina o ficheiro com fim de linha', async () => {
+      assert.ok((await readText(dir, 'out/new.json')).endsWith('}\n'));
+    });
   });
 
   test('--write-baseline nao escreve nada quando nada melhorou', async () => {
@@ -226,13 +311,22 @@ describe('check', () => {
     await assert.rejects(readText(dir, 'new.json'), { code: 'ENOENT' });
   });
 
-  test('--labels com a label de hotfix perdoa a falha', async () => {
-    await setup(BASELINE, { coverage: 65, lint: 10 });
+  describe('--labels com a label de hotfix', () => {
+    /** @type {CliRun} */
+    let result;
 
-    const result = await runIn(dir, ['check', '--labels', 'bug, hotfix-bypass-ratchet']);
+    beforeEach(async () => {
+      await setup(BASELINE, { coverage: 65, lint: 10 });
+      result = await runIn(dir, ['check', '--labels', 'bug, hotfix-bypass-ratchet']);
+    });
 
-    assert.equal(result.code, 0);
-    assert.match(result.stderr, /^warning: Failure forgiven: label `hotfix-bypass-ratchet`\.$/m);
+    test('perdoa a falha', () => {
+      assert.equal(result.code, 0);
+    });
+
+    test('regista a falha perdoada no stderr', () => {
+      assert.match(result.stderr, /^warning: Failure forgiven: label `hotfix-bypass-ratchet`\.$/m);
+    });
   });
 
   test('--labels pode repetir-se', async () => {
@@ -244,14 +338,56 @@ describe('check', () => {
     assert.equal(result.code, 0);
   });
 
-  test('--bypass-label troca a label de hotfix', async () => {
+  test('--bypass-label faz a label por omissao deixar de perdoar', async () => {
     await setup(BASELINE, { coverage: 65, lint: 10 });
+    const argv = ['check', '--bypass-label', 'urgent', '--labels', 'hotfix-bypass-ratchet'];
 
-    const standard = await runIn(dir, ['check', '--bypass-label', 'urgent', '--labels',
-      'hotfix-bypass-ratchet']);
-    const custom = await runIn(dir, ['check', '--bypass-label', 'urgent', '--labels', 'urgent']);
+    assert.equal((await runIn(dir, argv)).code, 1);
+  });
 
-    assert.deepEqual([standard.code, custom.code], [1, 0]);
+  test('--bypass-label faz a nova label perdoar', async () => {
+    await setup(BASELINE, { coverage: 65, lint: 10 });
+    const argv = ['check', '--bypass-label', 'urgent', '--labels', 'urgent'];
+
+    assert.equal((await runIn(dir, argv)).code, 0);
+  });
+
+  describe('caminhos vazios', () => {
+    beforeEach(async () => {
+      await setup(BASELINE, { coverage: 75, lint: 10 });
+    });
+
+    for (const option of ['--baseline', '--metrics', '--write-baseline']) {
+      test(`${option} vazio sai com 2`, async () => {
+        assert.equal((await runIn(dir, ['check', `${option}=`])).code, 2);
+      });
+
+      test(`${option} vazio diz que o valor e obrigatorio`, async () => {
+        const result = await runIn(dir, ['check', `${option}=`]);
+
+        assert.equal(result.stderr, `error: "${option}" is required`);
+      });
+
+      test(`${option} vazio nao imprime o sumario`, async () => {
+        assert.equal((await runIn(dir, ['check', `${option}=`])).stdout, '');
+      });
+    }
+
+    test('--write-baseline so com espacos sai com 2', async () => {
+      assert.equal((await runIn(dir, ['check', '--write-baseline', '  '])).code, 2);
+    });
+
+    test('--write-baseline so com espacos nao cria um ficheiro com esse nome', async () => {
+      await runIn(dir, ['check', '--write-baseline', '  ']);
+
+      await assert.rejects(readText(dir, '  '), { code: 'ENOENT' });
+    });
+
+    test('--language pt traduz o erro do caminho vazio', async () => {
+      const result = await runIn(dir, ['check', '--metrics=', '--language', 'pt']);
+
+      assert.equal(result.stderr, 'error: "--metrics" é obrigatório');
+    });
   });
 
   describe('governacao com --base-ref', () => {
@@ -275,26 +411,43 @@ describe('check', () => {
       assert.deepEqual(git.calls, []);
     });
 
-    test('baixar o baseline sem titulo autorizado falha', async () => {
-      await setup(LOWERED, { coverage: 65, lint: 10 });
-      const git = fakeGit({ 'main:quality-baseline.json': BASELINE });
-      const argv = ['check', '--base-ref', 'main', '--title', 'feat: x'];
+    describe('baixar o baseline sem titulo autorizado', () => {
+      /** @type {CliRun} */
+      let result;
 
-      const result = await runIn(dir, argv, { git });
+      beforeEach(async () => {
+        await setup(LOWERED, { coverage: 65, lint: 10 });
+        const git = fakeGit({ 'main:quality-baseline.json': BASELINE });
+        result = await runIn(dir, ['check', '--base-ref', 'main', '--title', 'feat: x'], { git });
+      });
 
-      assert.equal(result.code, 1);
-      assert.match(result.stderr, /loosens the baseline \(`coverage`\)/);
+      test('falha', () => {
+        assert.equal(result.code, 1);
+      });
+
+      test('diz que o baseline foi afrouxado', () => {
+        assert.match(result.stderr, /loosens the baseline \(`coverage`\)/);
+      });
     });
 
-    test('baixar o baseline com titulo autorizado passa', async () => {
-      await setup(LOWERED, { coverage: 65, lint: 10 });
-      const git = fakeGit({ 'main:quality-baseline.json': BASELINE });
-      const title = 'chore(ci): lower baseline after removing dead tests';
+    describe('baixar o baseline com titulo autorizado', () => {
+      /** @type {CliRun} */
+      let result;
 
-      const result = await runIn(dir, ['check', '--base-ref', 'main', '--title', title], { git });
+      beforeEach(async () => {
+        await setup(LOWERED, { coverage: 65, lint: 10 });
+        const git = fakeGit({ 'main:quality-baseline.json': BASELINE });
+        const title = 'chore(ci): lower baseline after removing dead tests';
+        result = await runIn(dir, ['check', '--base-ref', 'main', '--title', title], { git });
+      });
 
-      assert.equal(result.code, 0);
-      assert.match(result.stdout, /Baseline loosened with authorisation/);
+      test('passa', () => {
+        assert.equal(result.code, 0);
+      });
+
+      test('regista a autorizacao no sumario', () => {
+        assert.match(result.stdout, /Baseline loosened with authorisation/);
+      });
     });
 
     test('o titulo refactor: ja nao autoriza baixar o baseline', async () => {
@@ -314,13 +467,22 @@ describe('check', () => {
       assert.equal((await runIn(dir, argv, { git })).code, 0);
     });
 
-    test('padrao invalido sai com 2', async () => {
-      await setup(BASELINE, { coverage: 70, lint: 10 });
+    describe('padrao invalido', () => {
+      /** @type {CliRun} */
+      let result;
 
-      const result = await runIn(dir, ['check', '--lower-baseline-pattern', '(']);
+      beforeEach(async () => {
+        await setup(BASELINE, { coverage: 70, lint: 10 });
+        result = await runIn(dir, ['check', '--lower-baseline-pattern', '(']);
+      });
 
-      assert.equal(result.code, 2);
-      assert.match(result.stderr, /^error: invalid regular expression "\("/);
+      test('sai com 2', () => {
+        assert.equal(result.code, 2);
+      });
+
+      test('explica o erro', () => {
+        assert.match(result.stderr, /^error: invalid regular expression "\("/);
+      });
     });
 
     test('o contrato da revisao base prevalece sobre o baseline afrouxado', async () => {
@@ -332,26 +494,50 @@ describe('check', () => {
       assert.match(result.stderr, /^error: coverage regressed: 70 -> 65$/m);
     });
 
-    test('sem baseline nessa revisao avisa e segue sem governacao', async () => {
-      await setup(LOWERED, { coverage: 65, lint: 10 });
+    describe('sem baseline nessa revisao', () => {
+      /** @type {CliRun} */
+      let result;
 
-      const result = await runIn(dir, ['check', '--base-ref', 'main'], { git: fakeGit() });
+      beforeEach(async () => {
+        await setup(LOWERED, { coverage: 65, lint: 10 });
+        result = await runIn(dir, ['check', '--base-ref', 'main'], { git: fakeGit() });
+      });
 
-      assert.equal(result.code, 0);
-      assert.match(result.stderr, /^warning: There is no baseline at `quality-baseline\.json`/m);
-      assert.match(result.stdout, /^> There is no baseline at/m);
+      test('segue sem governacao', () => {
+        assert.equal(result.code, 0);
+      });
+
+      test('avisa no stderr', () => {
+        assert.match(result.stderr, /^warning: There is no baseline at `quality-baseline\.json`/m);
+      });
+
+      test('deixa nota no sumario', () => {
+        assert.match(result.stdout, /^> There is no baseline at/m);
+      });
     });
 
-    test('baseline invalido na revisao base avisa e segue sem governacao', async () => {
-      await setup(LOWERED, { coverage: 65, lint: 10 });
-      const git = fakeGit({ 'main:quality-baseline.json': '{ nope' });
+    describe('baseline invalido na revisao base', () => {
+      /** @type {CliRun} */
+      let result;
 
-      const result = await runIn(dir, ['check', '--base-ref', 'main'], { git });
+      beforeEach(async () => {
+        await setup(LOWERED, { coverage: 65, lint: 10 });
+        const git = fakeGit({ 'main:quality-baseline.json': '{ nope' });
+        result = await runIn(dir, ['check', '--base-ref', 'main'], { git });
+      });
 
-      assert.equal(result.code, 0);
-      assert.match(result.stderr, new RegExp('^warning: The baseline on the base branch is '
-        + 'invalid \\(main:quality-baseline\\.json is not valid JSON', 'm'));
-      assert.match(result.stdout, /^> The baseline on the base branch is invalid/m);
+      test('segue sem governacao', () => {
+        assert.equal(result.code, 0);
+      });
+
+      test('avisa no stderr', () => {
+        assert.match(result.stderr, new RegExp('^warning: The baseline on the base branch is '
+          + 'invalid \\(main:quality-baseline\\.json is not valid JSON', 'm'));
+      });
+
+      test('deixa nota no sumario', () => {
+        assert.match(result.stdout, /^> The baseline on the base branch is invalid/m);
+      });
     });
 
     test('baseline da revisao base com varios erros fica numa so linha', async () => {
@@ -364,31 +550,53 @@ describe('check', () => {
         + 'invalid \\(The baseline is invalid: - the baseline has no metrics\\), ', 'm'));
     });
 
-    test('--base-ref vazio sai com 2 sem consultar o git', async () => {
-      await setup(LOWERED, { coverage: 65, lint: 10 });
-      const git = fakeGit();
+    describe('--base-ref vazio', () => {
+      /** @type {CliRun} */
+      let result;
+      /** @type {import('./helpers.js').FakeGit} */
+      let git;
 
-      const result = await runIn(dir, ['check', '--base-ref='], { git });
+      beforeEach(async () => {
+        await setup(LOWERED, { coverage: 65, lint: 10 });
+        git = fakeGit();
+        result = await runIn(dir, ['check', '--base-ref='], { git });
+      });
 
-      assert.deepEqual(
-        { code: result.code, stderr: result.stderr, calls: git.calls },
-        { code: 2, stderr: 'error: "--base-ref" is required', calls: [] },
-      );
+      test('sai com 2', () => {
+        assert.equal(result.code, 2);
+      });
+
+      test('diz que --base-ref e obrigatorio', () => {
+        assert.equal(result.stderr, 'error: "--base-ref" is required');
+      });
+
+      test('nao consulta o git', () => {
+        assert.deepEqual(git.calls, []);
+      });
     });
 
-    test('falha do git sai com 2', async () => {
-      await setup(BASELINE, { coverage: 70, lint: 10 });
-      const git = {
-        calls: [],
-        show: async () => {
-          throw new ConfigError('git_show_failed', { ref: 'x', path: 'q', reason: 'bad ref' });
-        },
-      };
+    describe('falha do git', () => {
+      /** @type {CliRun} */
+      let result;
 
-      const result = await runIn(dir, ['check', '--base-ref', 'x'], { git });
+      beforeEach(async () => {
+        await setup(BASELINE, { coverage: 70, lint: 10 });
+        const git = {
+          calls: [],
+          show: async () => {
+            throw new ConfigError('git_show_failed', { ref: 'x', path: 'q', reason: 'bad ref' });
+          },
+        };
+        result = await runIn(dir, ['check', '--base-ref', 'x'], { git });
+      });
 
-      assert.equal(result.code, 2);
-      assert.equal(result.stderr, 'error: could not read q at x: bad ref');
+      test('sai com 2, sem desligar a governacao', () => {
+        assert.equal(result.code, 2);
+      });
+
+      test('mostra so o erro, sem nota de baseline em falta nem veredicto', () => {
+        assert.equal(result.stderr, 'error: could not read q at x: bad ref');
+      });
     });
   });
 });
