@@ -2,16 +2,22 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { commentMarker, upsertComment } from '../../src/github/comment.js';
+import { GitHubApiError } from '../../src/core/errors.js';
+import {
+  MAX_COMMENT_LENGTH, commentMarker, upsertComment,
+} from '../../src/github/comment.js';
 
 const REPO = 'dono/projecto';
 const DEFAULT_MARKER = '<!-- quality-ratchet -->';
+const AUTHOR = 'bot';
 
 /** @typedef {import('../../src/github/client.js').IssueComment} IssueComment */
+/** @typedef {import('../../src/github/comment.js').UpsertRequest} UpsertRequest */
 
 /**
- * Cliente falso: devolve os comentários indicados e regista criações e actualizações.
- * @param {Array<{id: number, body: string}>} existing
+ * Cliente falso: devolve os comentários indicados (autor 'bot' quando omitido) e regista
+ * criações e actualizações.
+ * @param {Array<Omit<IssueComment, 'user'> & {user?: string}>} existing
  */
 function fakeClient(existing) {
   /** @type {Array<{repo: string, number: number, body: string}>} */
@@ -19,7 +25,7 @@ function fakeClient(existing) {
   /** @type {Array<{repo: string, id: number, body: string}>} */
   const updated = [];
   const client = {
-    listIssueComments: async () => existing.map((comment) => ({ user: 'bot', ...comment })),
+    listIssueComments: async () => existing.map((comment) => ({ user: AUTHOR, ...comment })),
     /** @type {(repo: string, number: number, body: string) => Promise<{id: number}>} */
     createComment: async (repo, number, body) => (created.push({ repo, number, body }), { id: 1 }),
     /** @type {(repo: string, id: number, body: string) => Promise<{id: number}>} */
@@ -29,12 +35,27 @@ function fakeClient(existing) {
 }
 
 /**
- * Pedido de upsert com o marcador indicado.
+ * Pedido de upsert com o marcador e o autor indicados.
  * @param {string} marker
- * @returns {import('../../src/github/comment.js').UpsertRequest}
+ * @param {Partial<UpsertRequest>} [extra]
+ * @returns {UpsertRequest}
  */
-function request(marker) {
-  return { repo: REPO, number: 42, marker, body: 'resumo novo' };
+function request(marker, extra = {}) {
+  return { repo: REPO, number: 42, marker, author: AUTHOR, body: 'resumo novo', ...extra };
+}
+
+/**
+ * Executa a promessa e devolve o GitHubApiError que ela rejeita.
+ * @param {Promise<unknown>} promise
+ * @returns {Promise<GitHubApiError>}
+ */
+async function captureError(promise) {
+  const error = await promise.then(
+    () => assert.fail('era esperado um erro'),
+    (/** @type {unknown} */ reason) => reason,
+  );
+  assert.ok(error instanceof GitHubApiError);
+  return error;
 }
 
 describe('commentMarker', () => {
@@ -60,25 +81,44 @@ describe('upsertComment', () => {
     const fake = fakeClient([{ id: 5, body: 'comentário normal' }]);
     const outcome = await upsertComment(fake.client, request(DEFAULT_MARKER));
     assert.equal(outcome, 'created');
+  });
+
+  test('cria o comentário com o marcador, uma quebra de linha e o texto', async () => {
+    const fake = fakeClient([{ id: 5, body: 'comentário normal' }]);
+    await upsertComment(fake.client, request(DEFAULT_MARKER));
     const body = `${DEFAULT_MARKER}\nresumo novo`;
     assert.deepEqual(fake.created, [{ repo: REPO, number: 42, body }]);
   });
 
-  test('actualiza o comentário cujo body começa pelo marcador', async () => {
+  test('devolve updated quando o comentário já existe', async () => {
     const fake = fakeClient([{ id: 5, body: `${DEFAULT_MARKER}\nresumo antigo` }]);
     const outcome = await upsertComment(fake.client, request(DEFAULT_MARKER));
     assert.equal(outcome, 'updated');
+  });
+
+  test('actualiza o comentário cujo body começa pelo marcador', async () => {
+    const fake = fakeClient([{ id: 5, body: `${DEFAULT_MARKER}\nresumo antigo` }]);
+    await upsertComment(fake.client, request(DEFAULT_MARKER));
     assert.deepEqual(fake.updated, [{ repo: REPO, id: 5, body: `${DEFAULT_MARKER}\nresumo novo` }]);
   });
 
-  test('actualiza o mais recente quando vários começam pelo marcador', async () => {
+  test('actualiza todos os comentários do autor com o marcador, por ordem de id', async () => {
     const fake = fakeClient([
       { id: 10, body: `${DEFAULT_MARKER}\nsegundo` },
       { id: 3, body: `${DEFAULT_MARKER}\nprimeiro` },
       { id: 7, body: 'outro assunto' },
     ]);
     await upsertComment(fake.client, request(DEFAULT_MARKER));
-    assert.deepEqual(fake.updated.map((call) => call.id), [10]);
+    assert.deepEqual(fake.updated.map((call) => call.id), [3, 10]);
+  });
+
+  test('não cria outro comentário quando há vários com o marcador', async () => {
+    const fake = fakeClient([
+      { id: 10, body: `${DEFAULT_MARKER}\nsegundo` },
+      { id: 3, body: `${DEFAULT_MARKER}\nprimeiro` },
+    ]);
+    await upsertComment(fake.client, request(DEFAULT_MARKER));
+    assert.deepEqual(fake.created, []);
   });
 
   test('actualiza o comentário com espaços ou quebras de linha antes do marcador', async () => {
@@ -116,5 +156,70 @@ describe('upsertComment', () => {
     const fake = fakeClient([{ id: 5, body: 'comentário normal' }]);
     await upsertComment(fake.client, request(''));
     assert.equal(fake.created[0].body, `${DEFAULT_MARKER}\nresumo novo`);
+  });
+});
+
+describe('upsertComment: autor', () => {
+  /** Comentário do bot e um posterior, de outra pessoa, com o mesmo marcador. */
+  const HIJACKED = Object.freeze([
+    { id: 100, body: `${DEFAULT_MARKER}\nRatchet red`, user: AUTHOR },
+    { id: 200, body: `${DEFAULT_MARKER}\nRatchet green`, user: 'mallory' },
+  ]);
+
+  test('nunca actualiza um comentário marcado de outro autor', async () => {
+    const fake = fakeClient([...HIJACKED]);
+    await upsertComment(fake.client, request(DEFAULT_MARKER));
+    assert.deepEqual(fake.updated.map((call) => call.id), [100]);
+  });
+
+  test('cria um comentário quando só outro autor tem o marcador', async () => {
+    const fake = fakeClient([{ id: 200, body: `${DEFAULT_MARKER}\nverde`, user: 'mallory' }]);
+    const outcome = await upsertComment(fake.client, request(DEFAULT_MARKER));
+    assert.equal(outcome, 'created');
+  });
+
+  test('não distingue maiúsculas no login do autor', async () => {
+    const fake = fakeClient([{ id: 5, body: `${DEFAULT_MARKER}\nantigo`, user: 'Bot' }]);
+    const outcome = await upsertComment(fake.client, request(DEFAULT_MARKER));
+    assert.equal(outcome, 'updated');
+  });
+
+  test('sem autor conhecido actualiza o comentário de uma conta de bot', async () => {
+    const user = 'github-actions[bot]';
+    const fake = fakeClient([{ id: 5, body: `${DEFAULT_MARKER}\nantigo`, user }]);
+    const outcome = await upsertComment(fake.client, request(DEFAULT_MARKER, { author: null }));
+    assert.equal(outcome, 'updated');
+  });
+
+  test('sem autor conhecido ignora o comentário marcado de um utilizador', async () => {
+    const fake = fakeClient([{ id: 5, body: `${DEFAULT_MARKER}\nverde`, user: 'mallory' }]);
+    const outcome = await upsertComment(fake.client, request(DEFAULT_MARKER, { author: null }));
+    assert.equal(outcome, 'created');
+  });
+});
+
+describe('upsertComment: tamanho', () => {
+  /** Body que, com o marcador e a quebra de linha, passa um carácter do limite. */
+  const TOO_LONG = 'x'.repeat(MAX_COMMENT_LENGTH - DEFAULT_MARKER.length);
+
+  test('recusa com comment_too_long um body acima do limite da API', async () => {
+    const fake = fakeClient([]);
+    const error = await captureError(
+      upsertComment(fake.client, request(DEFAULT_MARKER, { body: TOO_LONG })));
+    assert.equal(error.code, 'comment_too_long');
+  });
+
+  test('não faz pedidos com um body acima do limite da API', async () => {
+    const fake = fakeClient([{ id: 5, body: `${DEFAULT_MARKER}\nantigo` }]);
+    await upsertComment(fake.client, request(DEFAULT_MARKER, { body: TOO_LONG })).catch(
+      (/** @type {unknown} */ error) => assert.ok(error instanceof GitHubApiError));
+    assert.deepEqual([fake.created, fake.updated], [[], []]);
+  });
+
+  test('aceita um body que fica exactamente no limite da API', async () => {
+    const fake = fakeClient([]);
+    const body = TOO_LONG.slice(1);
+    const outcome = await upsertComment(fake.client, request(DEFAULT_MARKER, { body }));
+    assert.equal(outcome, 'created');
   });
 });

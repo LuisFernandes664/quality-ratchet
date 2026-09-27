@@ -1,14 +1,17 @@
 // @ts-check
 /**
- * Ponto de entrada da action: liga as dependências reais (ambiente, rede, ficheiros,
- * stdout, relógio) e define o código de saída do processo.
+ * Ponto de entrada da action: liga as dependências reais (ambiente, rede, proxy,
+ * ficheiros, stdout, relógio) e define o código de saída do processo.
  */
 import { randomUUID } from 'node:crypto';
 import { access, appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import http from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
+import { setTimeout as wait } from 'node:timers/promises';
 
 import { runAction } from './action/main.js';
+import { configureProxy } from './action/proxy.js';
 
 /** Códigos de erro que significam "o ficheiro não existe". */
 const NOT_FOUND_CODES = new Set(['ENOENT', 'ENOTDIR']);
@@ -57,4 +60,6 @@ process.exitCode = await runAction({
   write: (line) => process.stdout.write(`${line}\n`),
   now: () => new Date(),
   randomId: () => randomUUID(),
+  sleep: (ms) => wait(ms),
+  proxy: () => configureProxy({ env: process.env, http }),
 });

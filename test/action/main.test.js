@@ -6,7 +6,11 @@ import path from 'node:path';
 import { describe, test } from 'node:test';
 
 import { runAction } from '../../src/action/main.js';
+import { ConfigError } from '../../src/core/errors.js';
 import { createTranslator } from '../../src/core/messages.js';
+
+/** @typedef {import('../../src/action/main.js').ActionDeps} ActionDeps */
+/** @typedef {import('../../src/action/proxy.js').ProxyMode} ProxyMode */
 
 const API_URL = 'https://api.test';
 const NOW = new Date('2026-09-27T10:00:00Z');
@@ -18,7 +22,10 @@ const AUTHORISED_TITLE = 'chore: lower baseline for the legacy module';
 const CONTENTS = `GET /repos/${REPO}/contents/quality-baseline.json?ref=${BASE_SHA}`;
 const PULL = `GET /repos/${REPO}/pulls/${PR_NUMBER}`;
 const LIST_COMMENTS = `GET /repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100&page=1`;
+const LIST_COMMENTS_PAGE_2 = LIST_COMMENTS.replace(/page=1$/, 'page=2');
 const CREATE_COMMENT = `POST /repos/${REPO}/issues/${PR_NUMBER}/comments`;
+const USER = 'GET /user';
+const MARKER = '<!-- quality-ratchet -->';
 
 /** Baseline v2 usado na maioria dos cenários. */
 const BASELINE = Object.freeze({
@@ -36,6 +43,14 @@ const LOWERED = Object.freeze({
   metrics: { ...BASELINE.metrics, coverage: { value: 70, direction: 'up' } },
 });
 
+/** Baseline cuja cobertura vem de um lcov relativo à pasta do baseline. */
+const LCOV_BASELINE = Object.freeze({
+  version: 2,
+  metrics: {
+    coverage: { value: 80, direction: 'up', source: { format: 'lcov', path: 'cov/lcov.info' } },
+  },
+});
+
 const EN = createTranslator('en');
 
 /**
@@ -45,14 +60,19 @@ const EN = createTranslator('en');
  * @property {Record<string, string>} [headers]
  */
 
+/** @typedef {Record<string, Reply|Reply[]|undefined>} Routes */
+
 /**
  * @typedef {object} Scenario
  * @property {Record<string, unknown>} [files] caminho relativo à pasta temporária -> conteúdo
  * @property {Record<string, string|undefined>} [env] variáveis extra (undefined apaga)
- * @property {Record<string, Reply|undefined>} [routes] 'MÉTODO /caminho' -> resposta
+ * @property {Routes} [routes] 'MÉTODO /caminho' -> resposta, ou respostas por ordem (a
+ *   última repete-se)
  * @property {unknown} [event] payload do evento, escrito em event.json
  * @property {string} [workspace] subpasta usada como GITHUB_WORKSPACE (omissão: a raiz)
  * @property {Partial<typeof realFs>} [fs] substitui operações do sistema de ficheiros
+ * @property {(ms: number) => Promise<void>} [sleep] espera entre tentativas (omissão: nenhuma)
+ * @property {() => ProxyMode} [proxy] configuração do proxy (omissão: 'none')
  */
 
 /**
@@ -127,7 +147,7 @@ function pullRequestEvent(options) {
 /**
  * Rotas da API para um pull request: baseline do ramo base, PR e comentários.
  * @param {{base?: unknown, title?: string, labels?: string[]}} [options]
- * @returns {Record<string, Reply|undefined>}
+ * @returns {Routes}
  */
 function prRoutes({ base = BASELINE, title, labels } = {}) {
   return {
@@ -142,23 +162,34 @@ function prRoutes({ base = BASELINE, title, labels } = {}) {
 const WITH_TOKEN = Object.freeze({ INPUT_TOKEN: 'tkn', GITHUB_REPOSITORY: REPO });
 
 /**
+ * Resposta de uma rota ao n-ésimo pedido: uma lista responde por ordem e repete a última.
+ * @param {Reply|Reply[]|undefined} entry
+ * @param {number} index pedidos anteriores à mesma rota
+ * @returns {Reply|undefined}
+ */
+function replyAt(entry, index) {
+  return Array.isArray(entry) ? entry[Math.min(index, entry.length - 1)] : entry;
+}
+
+/**
  * API falsa: responde pelas rotas dadas e 404 a tudo o resto; regista os pedidos.
- * @param {Record<string, Reply|undefined>} routes
+ * @param {Routes} routes
  */
 function fakeApi(routes) {
   /** @type {Array<{method: string, route: string, body: unknown}>} */
   const calls = [];
-  /** @type {typeof fetch} */
-  const fetch = async (url, init = {}) => {
+  /** @type {typeof globalThis.fetch} */
+  const fakeFetch = async (url, init = {}) => {
     const method = init.method ?? 'GET';
     const route = String(url).slice(API_URL.length);
+    const index = calls.filter((call) => call.method === method && call.route === route).length;
     calls.push({ method, route, body: init.body ? JSON.parse(String(init.body)) : undefined });
-    const reply = routes[`${method} ${route}`];
+    const reply = replyAt(routes[`${method} ${route}`], index);
     if (!reply) return new Response('{"message":"Not Found"}', { status: 404 });
-    const status = reply.status ?? 200;
-    return new Response(reply.body ?? null, { status, headers: reply.headers });
+    const { status = 200, body = null, headers } = reply;
+    return new Response(body, { status, headers });
   };
-  return { fetch, calls };
+  return { fetch: fakeFetch, calls };
 }
 
 /**
@@ -176,33 +207,57 @@ async function writeFiles(dir, files) {
 }
 
 /**
+ * Variáveis de ambiente do runner para um cenário.
+ * @param {string} dir pasta temporária do cenário
+ * @param {Scenario} scenario
+ * @returns {Record<string, string|undefined>}
+ */
+function scenarioEnv(dir, { workspace = '', event, env = {} }) {
+  return {
+    GITHUB_WORKSPACE: path.join(dir, workspace),
+    GITHUB_OUTPUT: path.join(dir, 'output.txt'),
+    GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md'),
+    GITHUB_API_URL: API_URL,
+    ...(event === undefined ? {} : { GITHUB_EVENT_PATH: path.join(dir, 'event.json') }),
+    ...env,
+  };
+}
+
+/**
+ * Dependências de runAction com os fakes do cenário.
+ * @param {string} dir pasta temporária do cenário
+ * @param {Scenario} scenario
+ * @param {typeof globalThis.fetch} fetch
+ * @param {string[]} lines recebe cada linha escrita no stdout
+ * @returns {ActionDeps}
+ */
+function scenarioDeps(dir, scenario, fetch, lines) {
+  return {
+    env: scenarioEnv(dir, scenario),
+    fetch,
+    fs: { ...realFs, ...scenario.fs },
+    write: (line) => { lines.push(line); },
+    now: () => NOW,
+    randomId: () => 'id',
+    sleep: scenario.sleep ?? (async () => {}),
+    proxy: scenario.proxy ?? (() => 'none'),
+  };
+}
+
+/**
  * Corre a action numa workspace temporária, apagada no fim do teste.
  * @param {import('node:test').TestContext} t
  * @param {Scenario} scenario
  */
 async function runScenario(t, scenario = {}) {
-  const { files = {}, env = {}, routes = {}, event, workspace = '', fs = {} } = scenario;
+  const { files = {}, routes = {}, event } = scenario;
   const dir = await mkdtemp(path.join(os.tmpdir(), 'quality-ratchet-action-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   await writeFiles(dir, event === undefined ? files : { ...files, 'event.json': event });
   const api = fakeApi(routes);
   /** @type {string[]} */
   const lines = [];
-  const code = await runAction({
-    env: {
-      GITHUB_WORKSPACE: path.join(dir, workspace),
-      GITHUB_OUTPUT: path.join(dir, 'output.txt'),
-      GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md'),
-      GITHUB_API_URL: API_URL,
-      ...(event === undefined ? {} : { GITHUB_EVENT_PATH: path.join(dir, 'event.json') }),
-      ...env,
-    },
-    fetch: api.fetch,
-    fs: { ...realFs, ...fs },
-    write: (line) => lines.push(line),
-    now: () => NOW,
-    randomId: () => 'id',
-  });
+  const code = await runAction(scenarioDeps(dir, scenario, api.fetch, lines));
   const read = (/** @type {string} */ name) => readFile(path.join(dir, name), 'utf8');
   return { code, lines, calls: api.calls, dir, read };
 }
@@ -276,16 +331,8 @@ describe('runAction: resultado do gate', () => {
   });
 
   test('sources (lcov) são lidas relativamente à pasta do baseline', async (t) => {
-    const baseline = {
-      version: 2,
-      metrics: {
-        coverage: {
-          value: 80, direction: 'up', source: { format: 'lcov', path: 'cov/lcov.info' },
-        },
-      },
-    };
     const files = {
-      'pkg/quality-baseline.json': baseline,
+      'pkg/quality-baseline.json': LCOV_BASELINE,
       'pkg/cov/lcov.info': 'SF:a.js\nLF:10\nLH:9\nend_of_record\n',
     };
     const env = { INPUT_BASELINE: 'pkg/quality-baseline.json' };
@@ -661,11 +708,11 @@ describe('runAction: comentário', () => {
   });
 
   test('actualiza o comentário existente em vez de criar outro', async (t) => {
-    const existing = [{ id: 42, body: '<!-- quality-ratchet -->\nold', user: { login: 'bot' } }];
+    const existing = [{ id: 42, body: `${MARKER}\nold`, user: { login: 'github-actions[bot]' } }];
     const routes = {
       ...prRoutes(),
       [LIST_COMMENTS]: json(existing),
-      [`GET /repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100&page=2`]: json([]),
+      [LIST_COMMENTS_PAGE_2]: json([]),
       [`PATCH /repos/${REPO}/issues/comments/42`]: json({ id: 42 }),
     };
 
@@ -768,5 +815,425 @@ describe('runAction: configuração inválida', () => {
     const { code } = await runScenario(t, { files: { 'metrics-current.json': {} } });
 
     assert.equal(code, 1);
+  });
+});
+
+describe('runAction: checkout numa subpasta', () => {
+  /** Ficheiros do projecto numa subpasta `app/` da workspace. */
+  const APP_FILES = Object.freeze({
+    'app/quality-baseline.json': BASELINE,
+    'app/metrics-current.json': { coverage: 80, lint: 10 },
+  });
+  /** Repositório em `app/` (actions/checkout com `path: app`). */
+  const IN_APP = Object.freeze({ ...APP_FILES, 'app/.git/HEAD': 'ref: refs/heads/main\n' });
+  const APP_ENV = Object.freeze({
+    ...WITH_TOKEN,
+    INPUT_BASELINE: 'app/quality-baseline.json',
+    INPUT_METRICS: 'app/metrics-current.json',
+  });
+
+  test('pede o baseline pelo caminho relativo à raiz do repositório', async (t) => {
+    const { calls } = await runScenario(t, {
+      files: IN_APP, env: APP_ENV, event: pullRequestEvent(), routes: prRoutes(),
+    });
+
+    assert.ok(calls.some((call) => `${call.method} ${call.route}` === CONTENTS));
+  });
+
+  test('baixar o baseline sem título autorizado falha', async (t) => {
+    const files = { ...IN_APP, 'app/quality-baseline.json': LOWERED };
+
+    const { code } = await runScenario(t, {
+      files, env: APP_ENV, event: pullRequestEvent(), routes: prRoutes(),
+    });
+
+    assert.equal(code, 1);
+  });
+
+  test('um .git em ficheiro (worktree, submódulo) marca a raiz', async (t) => {
+    const files = { ...APP_FILES, 'app/.git': 'gitdir: ../.git/worktrees/app\n' };
+
+    const { calls } = await runScenario(t, {
+      files, env: APP_ENV, event: pullRequestEvent(), routes: prRoutes(),
+    });
+
+    assert.ok(calls.some((call) => `${call.method} ${call.route}` === CONTENTS));
+  });
+
+  test('num monorepo com .git na raiz mantém o caminho do pacote', async (t) => {
+    const files = {
+      '.git/HEAD': 'ref: refs/heads/main\n',
+      'packages/api/quality-baseline.json': BASELINE,
+      'm.json': { coverage: 80, lint: 10 },
+    };
+    const env = {
+      ...WITH_TOKEN, INPUT_BASELINE: 'packages/api/quality-baseline.json', INPUT_METRICS: 'm.json',
+    };
+
+    const { calls } = await runScenario(t, { files, env, event: pullRequestEvent(), routes: {} });
+
+    const route = `/repos/${REPO}/contents/packages/api/quality-baseline.json?ref=${BASE_SHA}`;
+    assert.ok(calls.some((call) => call.route === route));
+  });
+
+  test('ignora um .git acima da workspace', async (t) => {
+    const files = {
+      '.git/HEAD': 'ref: refs/heads/main\n',
+      'ws/quality-baseline.json': BASELINE,
+      'ws/metrics-current.json': { coverage: 80, lint: 10 },
+    };
+
+    const { calls } = await runScenario(t, {
+      files, env: WITH_TOKEN, workspace: 'ws', event: pullRequestEvent(), routes: prRoutes(),
+    });
+
+    assert.ok(calls.some((call) => `${call.method} ${call.route}` === CONTENTS));
+  });
+});
+
+describe('runAction: autor do comentário', () => {
+  const PATCH_42 = `PATCH /repos/${REPO}/issues/comments/42`;
+  const PATCH_43 = `PATCH /repos/${REPO}/issues/comments/43`;
+
+  /**
+   * Rotas com dois comentários marcados, dos autores indicados (ids 42 e 43).
+   * @param {string} first autor do comentário 42
+   * @param {string} second autor do comentário 43
+   * @returns {Routes}
+   */
+  function markedBy(first, second) {
+    const existing = [
+      { id: 42, body: `${MARKER}\nold`, user: { login: first } },
+      { id: 43, body: `${MARKER}\nfake green`, user: { login: second } },
+    ];
+    return {
+      ...prRoutes(),
+      [LIST_COMMENTS]: json(existing),
+      [LIST_COMMENTS_PAGE_2]: json([]),
+      [USER]: json({ message: 'Resource not accessible by integration' }, 403),
+      [PATCH_42]: json({ id: 42 }),
+      [PATCH_43]: json({ id: 43 }),
+    };
+  }
+
+  /**
+   * Pedidos que alteram comentários ('MÉTODO /caminho').
+   * @param {Array<{method: string, route: string}>} calls
+   * @returns {string[]}
+   */
+  function writes(calls) {
+    return calls.filter((call) => call.method !== 'GET').map((c) => `${c.method} ${c.route}`);
+  }
+
+  test('ignora um comentário marcado mais recente de outro utilizador', async (t) => {
+    const routes = markedBy('github-actions[bot]', 'mallory');
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [PATCH_42]);
+  });
+
+  test('actualiza todos os comentários marcados do bot (execuções simultâneas)', async (t) => {
+    const routes = markedBy('github-actions[bot]', 'github-actions[bot]');
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [PATCH_42, PATCH_43]);
+  });
+
+  test('usa o login devolvido por GET /user', async (t) => {
+    const routes = { ...markedBy('github-actions[bot]', 'ana'), [USER]: json({ login: 'ana' }) };
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [PATCH_43]);
+  });
+
+  test('comment-author escolhe o autor dos comentários a actualizar', async (t) => {
+    const env = { ...WITH_TOKEN, 'INPUT_COMMENT-AUTHOR': 'my-app[bot]' };
+    const routes = markedBy('github-actions[bot]', 'my-app[bot]');
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [PATCH_43]);
+  });
+
+  test('com comment-author não pede GET /user', async (t) => {
+    const env = { ...WITH_TOKEN, 'INPUT_COMMENT-AUTHOR': 'my-app[bot]' };
+    const routes = markedBy('github-actions[bot]', 'my-app[bot]');
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env, event: pullRequestEvent(), routes,
+    });
+
+    assert.equal(calls.some((call) => call.route === '/user'), false);
+  });
+
+  test('uma falha de GET /user só gera aviso e o exit segue o gate', async (t) => {
+    const routes = { ...markedBy('github-actions[bot]', 'ana'), [USER]: json({ m: 'x' }, 500) };
+
+    const { code } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    assert.equal(code, 0);
+  });
+});
+
+describe('runAction: falhas ao comentar', () => {
+  /**
+   * Linha de aviso esperada para uma falha do POST do comentário.
+   * @param {string} code código da mensagem
+   * @param {number} status
+   * @param {string} body
+   * @returns {string}
+   */
+  function commentWarning(code, status, body) {
+    const path = `/repos/${REPO}/issues/${PR_NUMBER}/comments`;
+    const reason = EN('github_api_failed', { method: 'POST', path, status, body });
+    return `::warning::${EN(code, { reason })}`;
+  }
+
+  test('um 403 aponta para o token só de leitura dos forks', async (t) => {
+    const body = JSON.stringify({ message: 'Forbidden' });
+    const routes = { ...prRoutes(), [CREATE_COMMENT]: { status: 403, body } };
+
+    const { lines } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    assert.ok(commands(lines, 'warning').includes(commentWarning('log_comment_failed', 403, body)));
+  });
+
+  test('um 422 gera o aviso sem a explicação dos forks', async (t) => {
+    const body = JSON.stringify({ message: 'Validation Failed' });
+    const routes = { ...prRoutes(), [CREATE_COMMENT]: { status: 422, body } };
+
+    const { lines } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    const expected = commentWarning('log_comment_failed_generic', 422, body);
+    assert.ok(commands(lines, 'warning').includes(expected));
+  });
+});
+
+describe('runAction: tamanho do comentário', () => {
+  /**
+   * Ficheiros com `count` métricas: a primeira regride e as restantes melhoram.
+   * @param {number} count
+   * @param {number} [failing] quantas métricas regridem, a começar pela primeira
+   * @returns {Record<string, unknown>}
+   */
+  function manyMetrics(count, failing = 1) {
+    /** @type {Record<string, unknown>} */
+    const metrics = {};
+    /** @type {Record<string, number>} */
+    const measured = {};
+    for (let index = 0; index < count; index += 1) {
+      metrics[`metric_${index}`] = { value: 80, direction: 'up' };
+      measured[`metric_${index}`] = index < failing ? 50 : 90;
+    }
+    return { 'quality-baseline.json': { version: 2, metrics }, 'metrics-current.json': measured };
+  }
+
+  /**
+   * Corre um pull request com os ficheiros indicados e devolve o body do comentário criado.
+   * @param {import('node:test').TestContext} t
+   * @param {Record<string, unknown>} files
+   */
+  async function commentFor(t, files) {
+    const result = await runScenario(t, {
+      files, env: WITH_TOKEN, event: pullRequestEvent(), routes: prRoutes(),
+    });
+    const post = result.calls.find((call) => call.method === 'POST');
+    return { ...result, body: /** @type {{body: string}} */ (post?.body).body };
+  }
+
+  test('um sumário acima do limite gera um comentário que cabe no limite da API', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(2000));
+
+    assert.ok(body.length <= 65536, String(body.length));
+  });
+
+  test('o comentário abreviado começa pelo marcador', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(2000));
+
+    assert.ok(body.startsWith(`${MARKER}\n`));
+  });
+
+  test('o comentário abreviado mantém a métrica que falhou', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(2000));
+
+    assert.ok(body.includes('`metric_0`'));
+  });
+
+  test('o comentário abreviado omite as métricas melhoradas', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(2000));
+
+    assert.equal(body.includes('`metric_1999`'), false);
+  });
+
+  test('o comentário abreviado mantém as alterações que afrouxam o baseline', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(2000));
+
+    assert.ok(body.includes('| `coverage` |'));
+  });
+
+  test('o comentário abreviado omite as alterações que não afrouxam o baseline', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(2000));
+
+    assert.equal(body.includes('| `metric_1999` |'), false);
+  });
+
+  test('o comentário abreviado leva uma nota a indicar o sumário do job', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(2000));
+
+    assert.ok(body.includes(EN('note_comment_abbreviated')));
+  });
+
+  test('o sumário do job fica completo, com o baseline novo', async (t) => {
+    const { read } = await commentFor(t, manyMetrics(2000));
+
+    assert.ok((await read('summary.md')).includes('`metric_1999`'));
+  });
+
+  test('o output summary fica completo', async (t) => {
+    const { read } = await commentFor(t, manyMetrics(2000));
+
+    assert.ok(parseOutputs(await read('output.txt')).summary.includes('<details>'));
+  });
+
+  test('quando basta tirar o baseline novo, a tabela fica completa', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(700));
+
+    assert.ok(body.includes('`metric_699`'));
+  });
+
+  test('quando basta tirar o baseline novo, o comentário não o inclui', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(700));
+
+    assert.equal(body.includes('<details>'), false);
+  });
+
+  test('um sumário dentro do limite vai completo para o comentário', async (t) => {
+    const { body, read } = await commentFor(t, manyMetrics(3));
+
+    assert.equal(body, `${MARKER}\n${parseOutputs(await read('output.txt')).summary}`);
+  });
+
+  test('com demasiadas falhas o comentário é cortado para caber no limite', async (t) => {
+    const { body } = await commentFor(t, manyMetrics(3000, 3000));
+
+    assert.ok(body.length <= 65536, String(body.length));
+  });
+});
+
+describe('runAction: novas tentativas à API', () => {
+  const RETRIED = Object.freeze({ status: 502, body: '<html>bad gateway</html>' });
+
+  test('repete a leitura do baseline do ramo base depois de um 502', async (t) => {
+    const routes = { ...prRoutes(), [CONTENTS]: [RETRIED, raw(BASELINE)] };
+
+    const { read } = await runScenario(t, {
+      files: LOWERING, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(JSON.parse(parseOutputs(await read('output.txt')).loosened), ['coverage']);
+  });
+
+  test('regista um aviso por cada nova tentativa', async (t) => {
+    const routes = { ...prRoutes(), [CONTENTS]: [RETRIED, raw(BASELINE)] };
+
+    const { lines } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    const path = `/repos/${REPO}/contents/quality-baseline.json?ref=${BASE_SHA}`;
+    const params = { method: 'GET', path, status: 502, attempt: 1, seconds: 1 };
+    assert.ok(commands(lines, 'warning').includes(`::warning::${EN('log_api_retry', params)}`));
+  });
+
+  test('espera entre as tentativas com o sleep injectado', async (t) => {
+    /** @type {number[]} */
+    const delays = [];
+    const sleep = async (/** @type {number} */ ms) => { delays.push(ms); };
+    const routes = { ...prRoutes(), [CONTENTS]: RETRIED };
+
+    await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes, sleep,
+    });
+
+    assert.deepEqual(delays, [1000, 3000]);
+  });
+
+  test('um limite sem pedidos restantes espera até ao reset, pelo relógio injectado', async (t) => {
+    /** @type {number[]} */
+    const delays = [];
+    const sleep = async (/** @type {number} */ ms) => { delays.push(ms); };
+    const reset = String(NOW.getTime() / 1000 + 5);
+    const headers = { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': reset };
+    const routes = { ...prRoutes(), [CONTENTS]: [{ status: 403, headers }, raw(BASELINE)] };
+
+    await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes, sleep,
+    });
+
+    assert.deepEqual(delays, [5000]);
+  });
+});
+
+describe('runAction: proxy', () => {
+  test('com token, um proxy que o Node não aplica ao fetch gera aviso', async (t) => {
+    const { lines } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, proxy: () => 'unsupported',
+    });
+
+    assert.ok(commands(lines, 'warning').includes(`::warning::${EN('log_proxy_unsupported')}`));
+  });
+
+  test('um proxy que o Node não aplica não impede a execução', async (t) => {
+    const { code } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, proxy: () => 'unsupported',
+    });
+
+    assert.equal(code, 0);
+  });
+
+  for (const mode of /** @type {const} */ (['none', 'native', 'enabled'])) {
+    test(`com o proxy em modo ${mode} não há aviso`, async (t) => {
+      const { lines } = await runScenario(t, { files: GREEN, env: WITH_TOKEN, proxy: () => mode });
+
+      assert.deepEqual(commands(lines, 'warning'), []);
+    });
+  }
+
+  test('sem token não configura o proxy', async (t) => {
+    let configured = false;
+    const proxy = () => {
+      configured = true;
+      return /** @type {ProxyMode} */ ('enabled');
+    };
+
+    await runScenario(t, { files: GREEN, proxy });
+
+    assert.equal(configured, false);
+  });
+
+  test('uma configuração de proxy recusada termina com 1 e explica o erro', async (t) => {
+    const proxy = () => { throw new ConfigError('proxy_invalid', { reason: 'bad url' }); };
+
+    const { lines } = await runScenario(t, { files: GREEN, env: WITH_TOKEN, proxy });
+
+    const message = EN('proxy_invalid', { reason: 'bad url' });
+    assert.deepEqual(commands(lines, 'error'), [`::error::${message}`]);
   });
 });

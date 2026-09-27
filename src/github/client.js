@@ -6,6 +6,7 @@
  */
 
 import { Buffer } from 'node:buffer';
+import { setTimeout as wait } from 'node:timers/promises';
 
 import { GitHubApiError } from '../core/errors.js';
 
@@ -20,6 +21,19 @@ const REDACTED = '***';
 const UTF8_DECODER = new TextDecoder();
 const LINK_VALUE = /<([^>]*)>([^<]*)/g;
 const LINK_REL = /;\s*rel\s*=\s*(?:"([^"]*)"|([^\s;,]+))/i;
+
+/** Tentativas por pedido, incluindo a primeira. */
+const MAX_ATTEMPTS = 3;
+/** Espera antes da 2.ª e da 3.ª tentativa quando o servidor não indica outra. */
+const RETRY_DELAYS_MS = Object.freeze([1000, 3000]);
+/** Espera máxima pedida pelo servidor que ainda vale a pena cumprir. */
+const MAX_RETRY_WAIT_MS = 30000;
+/** Métodos idempotentes: o POST do comentário nunca se repete, para não o duplicar. */
+const RETRY_METHODS = new Set(['GET', 'PATCH']);
+/** Estados de falha transitória do servidor ou de um gateway. */
+const TRANSIENT_STATUSES = new Set([500, 502, 503, 504]);
+/** Estados com que GET /user recusa tokens sem identidade de utilizador (GITHUB_TOKEN). */
+const DENIED_STATUSES = new Set([401, 403, 404]);
 
 /**
  * Pull request normalizado, igual para a resposta da API e para o payload de um evento.
@@ -51,16 +65,32 @@ const LINK_REL = /;\s*rel\s*=\s*(?:"([^"]*)"|([^\s;,]+))/i;
  */
 
 /**
+ * Nova tentativa de um pedido que falhou de forma transitória.
+ * @typedef {object} RetryInfo
+ * @property {string} method
+ * @property {string} path caminho relativo ao apiUrl (sem o token)
+ * @property {number} status estado da tentativa falhada (0 numa falha de rede)
+ * @property {number} attempt número da tentativa falhada, a começar em 1
+ * @property {number} delayMs espera antes da tentativa seguinte
+ */
+
+/**
  * @typedef {object} GitHubClientDeps
  * @property {typeof fetch} fetch
  * @property {string} apiUrl URL base da API (ex: 'https://api.github.com')
  * @property {string} token token de acesso; vazio omite o header authorization
  * @property {string} [userAgent] por omissão 'quality-ratchet'
  * @property {(info: TruncationInfo) => void} [onTruncated] regista o corte da paginação
+ * @property {(ms: number) => Promise<void>} [sleep] espera entre tentativas (por omissão,
+ *   um temporizador real)
+ * @property {() => number} [now] relógio em milissegundos, para cumprir o
+ *   x-ratelimit-reset; sem ele, um limite sem retry-after usa a espera por omissão
+ * @property {(info: RetryInfo) => void} [onRetry] regista cada nova tentativa
  */
 
 /**
  * @typedef {object} GitHubClient
+ * @property {() => Promise<string|null>} getAuthenticatedLogin
  * @property {(repo: string, number: number) => Promise<PullRequestInfo>} getPullRequest
  * @property {(repo: string, path: string, ref: string) => Promise<string|null>} getFileAtRef
  * @property {(repo: string, number: number) => Promise<IssueComment[]>} listIssueComments
@@ -76,6 +106,24 @@ const LINK_REL = /;\s*rel\s*=\s*(?:"([^"]*)"|([^\s;,]+))/i;
  */
 
 /** @typedef {{method: string, path: string}} RequestTarget */
+
+/**
+ * Pedido pronto a enviar, igual em todas as tentativas.
+ * @typedef {object} PreparedRequest
+ * @property {string} url
+ * @property {RequestInit} init
+ * @property {RequestTarget} target
+ */
+
+/**
+ * Tentativa falhada e se vale a pena repetir.
+ * @typedef {object} FailedAttempt
+ * @property {GitHubApiError} error
+ * @property {boolean} retry falha transitória ou limite de pedidos
+ * @property {number|null} wait espera pedida pelo servidor (ms), quando a indica
+ */
+
+/** @typedef {{response: Response}|FailedAttempt} AttemptResult */
 
 /**
  * Resposta a interpretar como JSON e a sua origem, para as mensagens de erro.
@@ -100,6 +148,7 @@ const LINK_REL = /;\s*rel\s*=\s*(?:"([^"]*)"|([^\s;,]+))/i;
  */
 export function createGitHubClient(deps) {
   return {
+    getAuthenticatedLogin: () => getAuthenticatedLogin(deps),
     getPullRequest: (repo, number) => getPullRequest(deps, repo, number),
     getFileAtRef: (repo, path, ref) => getFileAtRef(deps, repo, path, ref),
     listIssueComments: (repo, number) => listIssueComments(deps, repo, number),
@@ -126,6 +175,18 @@ export function mapPullRequest(data) {
     baseRepo: asString(asRecord(base.repo).full_name),
     headRepo: asString(asRecord(head.repo).full_name),
   };
+}
+
+/**
+ * Login da identidade do token (GET /user). Devolve null quando o token não tem identidade
+ * de utilizador: o GITHUB_TOKEN e os tokens de GitHub Apps recebem 403 nesse endpoint.
+ * @param {GitHubClientDeps} deps
+ * @returns {Promise<string|null>}
+ */
+async function getAuthenticatedLogin(deps) {
+  const data = await requestJson(deps, '/user', {}).catch(nullIfDenied);
+  const login = asString(asRecord(data).login);
+  return login === '' ? null : login;
 }
 
 /**
@@ -258,17 +319,22 @@ function nextRoute(deps, response, url, state, count) {
 /**
  * URL da relação "next" do header Link, fixado na origem do apiUrl para que o token não
  * siga para outro servidor (o Gitea gera os links com o ROOT_URL público, que pode não ser
- * o endereço usado pelo runner).
+ * o endereço usado pelo runner). O caminho é copiado tal como está: resolvê-lo como
+ * referência relativa faria de um caminho '//host/...' um URL para outro servidor.
  * @param {string} apiUrl
  * @param {string} base URL da página actual
  * @param {string} link valor do header Link
- * @returns {string|null}
+ * @returns {string|null} null quando não há página seguinte
  */
 function followLink(apiUrl, base, link) {
   const target = findNextLink(link);
   if (target === null) return null;
   const url = new URL(target, base);
-  return new URL(`${url.pathname}${url.search}`, new URL(apiUrl).origin).href;
+  const origin = new URL(apiUrl).origin;
+  const pinned = new URL(origin);
+  pinned.pathname = url.pathname;
+  pinned.search = url.search;
+  return new URL(pinned.href).origin === origin ? pinned.href : null;
 }
 
 /**
@@ -321,21 +387,114 @@ async function requestJson(deps, route, options) {
 }
 
 /**
- * Envia um pedido à API. Qualquer resposta fora de 2xx lança GitHubApiError.
+ * Envia um pedido à API. Qualquer resposta fora de 2xx lança GitHubApiError. Os pedidos
+ * idempotentes (GET, PATCH) repetem-se até MAX_ATTEMPTS vezes em falhas transitórias
+ * (rede, 5xx de gateway) e em limites de pedidos (429, ou 403 com retry-after ou sem
+ * pedidos restantes), cumprindo a espera pedida pelo servidor até MAX_RETRY_WAIT_MS.
  * @param {GitHubClientDeps} deps
  * @param {string} route caminho relativo ao apiUrl ou URL absoluto
  * @param {SendOptions} options
  * @returns {Promise<Response>}
  */
 async function send(deps, route, options) {
+  const request = prepareRequest(deps, route, options);
+  for (let attempt = 1; ; attempt += 1) {
+    const result = await attemptRequest(deps, request);
+    if ('response' in result) return result.response;
+    const delayMs = retryDelay(request.target.method, result, attempt);
+    if (delayMs === null) throw result.error;
+    deps.onRetry?.({ ...request.target, status: result.error.status, attempt, delayMs });
+    await (deps.sleep ?? wait)(delayMs);
+  }
+}
+
+/**
+ * Monta o URL e as opções do fetch.
+ * @param {GitHubClientDeps} deps
+ * @param {string} route caminho relativo ao apiUrl ou URL absoluto
+ * @param {SendOptions} options
+ * @returns {PreparedRequest}
+ */
+function prepareRequest(deps, route, options) {
   const url = resolveUrl(deps.apiUrl, route);
   const method = options.method ?? 'GET';
-  const target = { method, path: displayPath(deps.apiUrl, url) };
   const body = options.body === undefined ? undefined : JSON.stringify(options.body);
   const init = { method, headers: buildHeaders(deps, options), body };
-  const response = await callFetch(deps, url, init, target);
-  if (!response.ok) throw await httpError(deps, response, target);
-  return response;
+  return { url, init, target: { method, path: displayPath(deps.apiUrl, url) } };
+}
+
+/**
+ * Faz uma tentativa. Uma falha de rede passa a GitHubApiError com estado 0; uma resposta
+ * fora de 2xx passa a GitHubApiError, com o body lido (e por isso libertado).
+ * @param {GitHubClientDeps} deps
+ * @param {PreparedRequest} request
+ * @returns {Promise<AttemptResult>}
+ */
+async function attemptRequest(deps, { url, init, target }) {
+  /** @type {Response} */
+  let response;
+  try {
+    response = await deps.fetch(url, init);
+  } catch (error) {
+    return { error: networkError(deps, error, target), retry: true, wait: null };
+  }
+  if (response.ok) return { response };
+  const retry = TRANSIENT_STATUSES.has(response.status) || isRateLimited(response);
+  const waitMs = retry ? serverWait(deps, response.headers) : null;
+  return { error: await httpError(deps, response, target), retry, wait: waitMs };
+}
+
+/**
+ * Espera antes da próxima tentativa, ou null quando não se repete: método não
+ * idempotente, falha definitiva, tentativas esgotadas ou espera acima do máximo.
+ * @param {string} method
+ * @param {FailedAttempt} failure
+ * @param {number} attempt número da tentativa que falhou
+ * @returns {number|null}
+ */
+function retryDelay(method, failure, attempt) {
+  if (!failure.retry || !RETRY_METHODS.has(method) || attempt >= MAX_ATTEMPTS) return null;
+  const delayMs = failure.wait ?? RETRY_DELAYS_MS[attempt - 1];
+  return delayMs <= MAX_RETRY_WAIT_MS ? delayMs : null;
+}
+
+/**
+ * Indica se a resposta é um limite de pedidos. Um 403 sem estes headers é uma falta de
+ * permissões e nunca se repete.
+ * @param {Response} response
+ * @returns {boolean}
+ */
+function isRateLimited({ status, headers }) {
+  if (status === 429) return true;
+  return status === 403
+    && (headers.has('retry-after') || headerNumber(headers, 'x-ratelimit-remaining') === 0);
+}
+
+/**
+ * Espera pedida pelo servidor: retry-after (segundos) ou, sem pedidos restantes, o
+ * x-ratelimit-reset (segundos desde a época) face ao relógio.
+ * @param {GitHubClientDeps} deps
+ * @param {Headers} headers
+ * @returns {number|null} milissegundos, ou null quando o servidor não indica
+ */
+function serverWait(deps, headers) {
+  const retryAfter = headerNumber(headers, 'retry-after');
+  if (retryAfter !== null) return retryAfter * 1000;
+  const reset = headerNumber(headers, 'x-ratelimit-reset');
+  const exhausted = headerNumber(headers, 'x-ratelimit-remaining') === 0;
+  if (!exhausted || reset === null || deps.now === undefined) return null;
+  return Math.max(0, reset * 1000 - deps.now());
+}
+
+/**
+ * Valor inteiro não negativo de um header, ou null quando falta ou não é um inteiro.
+ * @param {Headers} headers
+ * @param {string} name
+ * @returns {number|null}
+ */
+function headerNumber(headers, name) {
+  const value = (headers.get(name) ?? '').trim();
+  return /^\d+$/.test(value) ? Number(value) : null;
 }
 
 /**
@@ -357,20 +516,15 @@ function buildHeaders(deps, options) {
 }
 
 /**
- * Chama o fetch injectado, convertendo falhas de rede em GitHubApiError com estado 0.
+ * Erro de uma falha de rede do fetch, com estado 0 e sem o token.
  * @param {GitHubClientDeps} deps
- * @param {string} url
- * @param {RequestInit} init
+ * @param {unknown} error rejeição do fetch
  * @param {RequestTarget} target
- * @returns {Promise<Response>}
+ * @returns {GitHubApiError}
  */
-async function callFetch(deps, url, init, target) {
-  try {
-    return await deps.fetch(url, init);
-  } catch (error) {
-    const body = truncate(redact(reasonOf(error), deps.token));
-    throw new GitHubApiError('github_api_failed', { ...target, status: 0, body }, 0);
-  }
+function networkError(deps, error, target) {
+  const body = truncate(redact(reasonOf(error), deps.token));
+  return new GitHubApiError('github_api_failed', { ...target, status: 0, body }, 0);
 }
 
 /**
@@ -406,6 +560,16 @@ async function readErrorBody(response) {
  */
 function nullIfNotFound(error) {
   if (error instanceof GitHubApiError && error.status === 404) return null;
+  throw error;
+}
+
+/**
+ * Converte uma recusa (401, 403, 404) em null; qualquer outro erro é relançado.
+ * @param {unknown} error
+ * @returns {null}
+ */
+function nullIfDenied(error) {
+  if (error instanceof GitHubApiError && DENIED_STATUSES.has(error.status)) return null;
   throw error;
 }
 

@@ -7,12 +7,13 @@
 import path from 'node:path';
 
 import { parseBaseline, serializeBaseline } from '../core/baseline.js';
+import { Status } from '../core/compare.js';
 import { BaselineError, ConfigError, GitHubApiError, RatchetError } from '../core/errors.js';
 import { createTranslator, describeError } from '../core/messages.js';
 import { runRatchet } from '../core/ratchet.js';
 import { renderSummary, reportLogEntries } from '../core/summary.js';
 import { createGitHubClient } from '../github/client.js';
-import { commentMarker, upsertComment } from '../github/comment.js';
+import { MAX_COMMENT_LENGTH, commentMarker, upsertComment } from '../github/comment.js';
 import { collectMeasurements, loadBaseline, parseJsonText, readJsonFile } from '../run.js';
 import { readPullRequestFromEvent } from './context.js';
 import { createActionIO, readBooleanInput, readInput, readOptionalInput } from './io.js';
@@ -21,11 +22,15 @@ import { createActionIO, readBooleanInput, readInput, readOptionalInput } from '
 /** @typedef {import('./io.js').Env} Env */
 /** @typedef {import('../core/messages.js').Translator} Translator */
 /** @typedef {import('../core/types.js').Baseline} Baseline */
+/** @typedef {import('../core/types.js').BaselineChange} BaselineChange */
 /** @typedef {import('../core/types.js').Issue} Issue */
 /** @typedef {import('../core/types.js').MetricResult} MetricResult */
 /** @typedef {import('../core/types.js').Report} Report */
 /** @typedef {import('../github/client.js').GitHubClient} GitHubClient */
 /** @typedef {import('../github/client.js').PullRequestInfo} PullRequestInfo */
+/** @typedef {import('../github/client.js').RetryInfo} RetryInfo */
+/** @typedef {import('../github/comment.js').UpsertRequest} UpsertRequest */
+/** @typedef {import('./proxy.js').ProxyMode} ProxyMode */
 
 const DEFAULT_API_URL = 'https://api.github.com';
 const DEFAULT_LANGUAGE = 'en';
@@ -37,6 +42,32 @@ const DEFAULTS = Object.freeze({
   bypassLabel: 'hotfix-bypass-ratchet',
   lowerPattern: '^chore(\\([^)]*\\))?: lower baseline',
 });
+
+/**
+ * Estados de erro ao comentar que indicam um token sem permissão de escrita, como o dos
+ * pull requests de forks.
+ */
+const READ_ONLY_STATUSES = new Set([403, 404]);
+
+/** Estados de linhas da tabela que o comentário abreviado omite. */
+const QUIET_STATUSES = new Set([Status.IMPROVED, Status.UNCHANGED]);
+
+/** Nota que acompanha um comentário abreviado para caber no limite da API. */
+const ABBREVIATED_NOTE = Object.freeze({ code: 'note_comment_abbreviated', params: {} });
+
+/**
+ * Reduções do relatório para o comentário, pela ordem em que se acumulam até o texto
+ * caber: sem o baseline novo (está no output new-baseline e no sumário do job), sem a
+ * lista de métricas não seguidas, só com as alterações ao baseline que o afrouxam, e só
+ * com as linhas da tabela que pedem atenção.
+ * @type {ReadonlyArray<(report: Report) => Report>}
+ */
+const COMMENT_REDUCTIONS = [
+  (report) => ({ ...report, tightened: [] }),
+  (report) => ({ ...report, untracked: [] }),
+  (report) => ({ ...report, changes: looseningChanges(report) }),
+  (report) => ({ ...report, outcome: { ...report.outcome, results: notableRows(report) } }),
+];
 
 /**
  * Acesso ao sistema de ficheiros usado pela action.
@@ -57,6 +88,9 @@ const DEFAULTS = Object.freeze({
  * @property {(line: string) => void} write escreve uma linha no stdout, sem terminador
  * @property {() => Date} now relógio
  * @property {() => string} randomId identificador aleatório para delimitadores heredoc
+ * @property {(ms: number) => Promise<void>} sleep espera entre tentativas de um pedido à API
+ * @property {() => ProxyMode} proxy aplica as variáveis de proxy do ambiente ao fetch e
+ *   devolve o modo; só é chamado quando há token
  */
 
 /**
@@ -67,6 +101,7 @@ const DEFAULTS = Object.freeze({
  * @property {string} metrics
  * @property {string} token
  * @property {boolean} comment
+ * @property {string} commentAuthor login dos comentários a actualizar ('' descobre-o)
  * @property {string} name
  * @property {string} bypassLabel
  * @property {string} lowerBaselinePattern
@@ -134,6 +169,7 @@ function readInputs(env) {
     metrics: resolvePath(workspace, readInput(env, 'metrics', DEFAULTS.metrics)),
     token: readInput(env, 'token'),
     comment: readBooleanInput(env, 'comment', true),
+    commentAuthor: readInput(env, 'comment-author'),
     name: readInput(env, 'name'),
     bypassLabel: readOptionalInput(env, 'bypass-label', DEFAULTS.bypassLabel),
     lowerBaselinePattern: readOptionalInput(env, 'lower-baseline-pattern', DEFAULTS.lowerPattern),
@@ -153,21 +189,37 @@ function resolvePath(workspace, filePath) {
 }
 
 /**
- * Cria o cliente da API quando há token; sem token não há chamadas à API.
+ * Cria o cliente da API quando há token; sem token não há chamadas à API. Um proxy que
+ * este Node não consegue aplicar ao fetch gera um aviso: com NO_PROXY a API pode estar
+ * acessível na mesma, mas sem ele os pedidos falham e o aviso explica porquê.
  * @param {ActionDeps} deps
  * @param {ActionIO} io
  * @param {Translator} t
  * @param {ActionInputs} inputs
  * @returns {GitHubClient|null}
+ * @throws {ConfigError} proxy_invalid quando a configuração do proxy é recusada
  */
 function createClient(deps, io, t, inputs) {
   if (inputs.token === '') return null;
+  if (deps.proxy() === 'unsupported') io.warning(t('log_proxy_unsupported'));
   return createGitHubClient({
     fetch: deps.fetch,
     apiUrl: deps.env.GITHUB_API_URL || DEFAULT_API_URL,
     token: inputs.token,
+    sleep: deps.sleep,
+    now: () => deps.now().getTime(),
     onTruncated: (info) => io.warning(t('log_pagination_truncated', { ...info })),
+    onRetry: (info) => io.warning(t('log_api_retry', retryParams(info))),
   });
+}
+
+/**
+ * Parâmetros da mensagem de nova tentativa, com a espera em segundos.
+ * @param {RetryInfo} info
+ * @returns {Record<string, unknown>}
+ */
+function retryParams({ method, path: route, status, attempt, delayMs }) {
+  return { method, path: route, status, attempt, seconds: Math.ceil(delayMs / 1000) };
 }
 
 /**
@@ -185,7 +237,7 @@ async function execute(run) {
   const report = runRatchet({ head, base, ...collected, context, options });
   const summary = renderSummary(report, run.t, { name: run.inputs.name, notes: run.notes });
   await publishResults(run, report, summary);
-  if (pr) await publishComment(run, pr, summary);
+  if (pr) await publishComment(run, pr, report, summary);
   logReport(run, report);
   return report.ok ? 0 : 1;
 }
@@ -230,7 +282,7 @@ async function readEventPullRequest(run) {
  */
 async function loadBaseBaseline(run, pr) {
   if (run.client === null) return withNote(run, 'note_no_token', {});
-  const repoPath = repositoryPath(run.inputs.workspace, run.inputs.baseline);
+  const repoPath = repositoryPath(await checkoutRoot(run), run.inputs.baseline);
   const text = repoPath.startsWith('../')
     ? null
     : await run.client.getFileAtRef(requireRepository(run.deps.env), repoPath, pr.baseSha);
@@ -279,13 +331,43 @@ function withNote(run, code, params) {
 }
 
 /**
- * Caminho de um ficheiro no repositório: relativo à workspace, com '/' e sem './'.
+ * Raiz do checkout que contém o baseline: a pasta mais próxima com uma entrada `.git`
+ * (pasta, ou ficheiro nos worktrees e submódulos), subindo da pasta do baseline até à
+ * workspace, inclusive. Com `actions/checkout` e `path:` o repositório fica numa
+ * subpasta da workspace. Sem `.git` (checkout pela API REST), ou com o baseline fora da
+ * workspace, a raiz é a própria workspace; nunca se procura acima dela.
+ * @param {ActionRun} run
+ * @returns {Promise<string>}
+ */
+async function checkoutRoot(run) {
+  const { workspace, baseline } = run.inputs;
+  for (let dir = path.dirname(baseline); isWithin(workspace, dir); dir = path.dirname(dir)) {
+    if (await run.deps.fs.exists(path.join(dir, '.git'))) return dir;
+    if (path.relative(workspace, dir) === '') break;
+  }
+  return workspace;
+}
+
+/**
+ * Indica se a pasta é a workspace ou está dentro dela.
  * @param {string} workspace
+ * @param {string} dir
+ * @returns {boolean}
+ */
+function isWithin(workspace, dir) {
+  const relative = path.relative(workspace, dir);
+  const outside = relative === '..' || relative.startsWith(`..${path.sep}`);
+  return !outside && !path.isAbsolute(relative);
+}
+
+/**
+ * Caminho de um ficheiro no repositório: relativo à raiz do checkout, com '/' e sem './'.
+ * @param {string} root raiz do checkout
  * @param {string} filePath
  * @returns {string}
  */
-function repositoryPath(workspace, filePath) {
-  const relative = path.relative(workspace, filePath).split(path.sep).join('/');
+function repositoryPath(root, filePath) {
+  const relative = path.relative(root, filePath).split(path.sep).join('/');
   return path.posix.normalize(relative).replace(/^(\.\/)+/, '');
 }
 
@@ -411,27 +493,100 @@ async function writeBaselineFile(run, report) {
 /**
  * Cria ou actualiza o comentário do pull request. Uma falha da API só gera aviso: os
  * pull requests de forks recebem um token só de leitura e o comentário não pode chumbar
- * o gate.
+ * o gate. Só os erros de permissão (403, 404) apontam para essa causa.
  * @param {ActionRun} run
  * @param {PullRequestInfo} pr
- * @param {string} summary
+ * @param {Report} report
+ * @param {string} summary sumário completo
  * @returns {Promise<void>}
  */
-async function publishComment(run, pr, summary) {
-  if (!run.inputs.comment || run.client === null) return;
-  const request = {
-    repo: requireRepository(run.deps.env),
-    number: pr.number,
-    marker: commentMarker(run.inputs.name),
-    body: summary,
-  };
+async function publishComment(run, pr, report, summary) {
+  const client = run.client;
+  if (!run.inputs.comment || client === null) return;
   try {
-    const result = await upsertComment(run.client, request);
+    const request = await commentRequest(run, client, pr, commentBody(run, report, summary));
+    const result = await upsertComment(client, request);
     run.io.notice(run.t(`log_comment_${result}`, { number: pr.number }));
   } catch (error) {
     if (!(error instanceof GitHubApiError)) throw error;
-    run.io.warning(run.t('log_comment_failed', { reason: describeError(error, run.t) }));
+    const code = READ_ONLY_STATUSES.has(error.status) ? 'log_comment_failed'
+      : 'log_comment_failed_generic';
+    run.io.warning(run.t(code, { reason: describeError(error, run.t) }));
   }
+}
+
+/**
+ * Pedido de upsert do comentário. O autor é o input comment-author ou, sem ele, o login do
+ * token; quando o token não tem login (GITHUB_TOKEN, GitHub Apps), null aceita só contas
+ * de bot. Comentários de outras pessoas com o mesmo marcador nunca são alvo.
+ * @param {ActionRun} run
+ * @param {GitHubClient} client
+ * @param {PullRequestInfo} pr
+ * @param {string} body
+ * @returns {Promise<UpsertRequest>}
+ */
+async function commentRequest(run, client, pr, body) {
+  return {
+    repo: requireRepository(run.deps.env),
+    number: pr.number,
+    marker: commentMarker(run.inputs.name),
+    author: run.inputs.commentAuthor || await client.getAuthenticatedLogin(),
+    body,
+  };
+}
+
+/**
+ * Texto do comentário: o sumário completo quando cabe no limite da API; senão uma versão
+ * abreviada, com nota, e em último caso cortada numa quebra de linha. O sumário do job e
+ * o output summary ficam sempre completos.
+ * @param {ActionRun} run
+ * @param {Report} report
+ * @param {string} summary sumário completo
+ * @returns {string}
+ */
+function commentBody(run, report, summary) {
+  const limit = MAX_COMMENT_LENGTH - commentMarker(run.inputs.name).length - 1;
+  const options = { name: run.inputs.name, notes: [...run.notes, ABBREVIATED_NOTE] };
+  let text = summary;
+  let reduced = report;
+  for (const reduce of COMMENT_REDUCTIONS) {
+    if (text.length <= limit) return text;
+    reduced = reduce(reduced);
+    text = renderSummary(reduced, run.t, options);
+  }
+  return text.length <= limit ? text : cutAtLine(text, limit);
+}
+
+/**
+ * Linhas da tabela que pedem atenção: falhas, regressões toleradas e melhorias por fixar.
+ * @param {Report} report
+ * @returns {MetricResult[]}
+ */
+function notableRows(report) {
+  const unlocked = new Set(report.outcome.unlocked.map((row) => row.name));
+  return report.outcome.results.filter((row) => (
+    !QUIET_STATUSES.has(row.status) || unlocked.has(row.name)));
+}
+
+/**
+ * Alterações ao baseline que o afrouxam, as únicas que a governação precisa de mostrar.
+ * @param {Report} report
+ * @returns {BaselineChange[]}
+ */
+function looseningChanges(report) {
+  const loosened = new Set(report.loosened.map((change) => change.name));
+  return report.changes.filter((change) => loosened.has(change.name));
+}
+
+/**
+ * Corta o texto na última quebra de linha que cabe no limite.
+ * @param {string} text
+ * @param {number} limit
+ * @returns {string}
+ */
+function cutAtLine(text, limit) {
+  const end = text.lastIndexOf('\n', limit);
+  return text.slice(0, end > 0 ? end : limit);
 }
 
 /**
