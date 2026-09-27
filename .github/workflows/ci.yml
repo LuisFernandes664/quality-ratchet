@@ -4,31 +4,55 @@ on:
   push:
     branches: [main]
   pull_request:
+    # edited and labeled/unlabeled re-run the ratchet when the title or the hotfix label changes.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
-permissions:
-  contents: read
+permissions: {}
+
+# One group per pull request, where a new event cancels the run in progress. Pushes get one
+# group per commit: a shared group would cancel the pending run of an intermediate commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
+    name: test (node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
+      fail-fast: false
       matrix:
         node: [20, 22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: node --test
-      - run: node --test --experimental-test-coverage
+
+  typecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
 
   self-check:
+    name: self-check (green)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Metrics that improve on the baseline
         run: |
@@ -45,7 +69,90 @@ jobs:
           JSON
 
       - name: The ratchet runs against itself
+        id: ratchet
         uses: ./
         with:
+          name: example
           baseline: quality-baseline.example.json
           metrics: metrics-current.json
+
+      - name: The ratchet must pass
+        env:
+          PASSED: ${{ steps.ratchet.outputs.passed }}
+        run: |
+          if [ "$PASSED" != "true" ]; then
+            echo "::error::Expected passed == 'true', got '$PASSED'."
+            exit 1
+          fi
+
+  self-check-red:
+    name: self-check (red)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Metrics that regress against the baseline
+        run: |
+          cat > metrics-current.json <<'JSON'
+          {
+            "lint_violations_total": 490,
+            "duplication_pct": 2.2,
+            "coverage_line_pct": 6.5,
+            "mutation_score_covered_pct": 81.6,
+            "files_above_line_limit": 19,
+            "complexity_violations": 0,
+            "vulnerabilities_high": 0
+          }
+          JSON
+
+      - name: The ratchet runs against itself and must fail
+        id: ratchet
+        continue-on-error: true
+        uses: ./
+        with:
+          name: example-red
+          baseline: quality-baseline.example.json
+          metrics: metrics-current.json
+          comment: false
+          # A label nobody applies: with the default one, a hotfix pull request would
+          # forgive this failure on purpose and break the check below.
+          bypass-label: self-check-red-is-never-forgiven
+
+      - name: The step failed and passed is false
+        env:
+          OUTCOME: ${{ steps.ratchet.outcome }}
+          PASSED: ${{ steps.ratchet.outputs.passed }}
+        run: |
+          if [ "$OUTCOME" != "failure" ] || [ "$PASSED" != "false" ]; then
+            echo "::error::Expected a failed step with passed == 'false'."
+            echo "::error::Got outcome '$OUTCOME' and passed '$PASSED'."
+            exit 1
+          fi
+
+  dogfood:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Coverage of src/ as LCOV
+        run: |
+          mkdir -p coverage
+          node --test --experimental-test-coverage \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=lcov --test-reporter-destination=coverage/lcov.info \
+            --test-coverage-include='src/**'
+
+      - name: The ratchet guards its own quality
+        uses: ./
+        with:
+          name: self
+          baseline: quality-baseline.json
