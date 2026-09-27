@@ -4,6 +4,7 @@
  * (sumário, logs, erros) passa por aqui, identificado por código.
  */
 import { ConfigError, RatchetError } from './errors.js';
+import { codeSpan, oneLine } from './markdown.js';
 
 /**
  * @typedef {(params: Record<string, any>, t: Translator) => string} Template
@@ -32,10 +33,35 @@ function issueList(issues, t) {
   return issues.map((item) => `- ${t(item.code, item.params)}`).join('\n');
 }
 
+/**
+ * Texto de um motivo, que pode ser um problema do catálogo ou texto já pronto (por exemplo a
+ * mensagem do motor de JSON). O resultado fica numa só linha, porque vem de relatórios.
+ * @param {unknown} reason
+ * @param {Translator} t
+ * @returns {string}
+ */
+function reasonText(reason, t) {
+  if (typeof reason === 'string') return oneLine(reason);
+  if (reason && typeof reason === 'object' && 'code' in reason) {
+    const issue = /** @type {{code: string, params?: Record<string, unknown>}} */ (reason);
+    return oneLine(t(issue.code, issue.params ?? {}));
+  }
+  return oneLine(String(reason ?? ''));
+}
+
+/**
+ * Acrescenta `: detalhe` quando há detalhe.
+ * @param {unknown} details
+ * @returns {string}
+ */
+function withDetails(details) {
+  return details ? `: ${oneLine(String(details))}` : '';
+}
+
 /** @type {Record<string, Template>} */
 const EN = {
   title: (p) => (p.name ? `Quality ratchet - ${p.name}` : 'Quality ratchet'),
-  verdict_passed: () => 'Ratchet green. No metric regressed.',
+  verdict_passed: () => 'Ratchet green. No metric regressed beyond its tolerance.',
   verdict_failed: (p) => `Ratchet red. ${joinParts([
     p.failures > 0 && `${p.failures} failing metric(s)`,
     p.unlocked > 0 && `${p.unlocked} improvement(s) not locked in`,
@@ -46,14 +72,16 @@ const EN = {
   note_loosen_unauthorised: (p) => `This pull request loosens the baseline (${p.names}) `
     + 'without authorisation. Give it a title that matches the lower-baseline pattern, '
     + 'or revert the change.',
+  note_loosen_disabled: (p) => `This pull request loosens the baseline (${p.names}), but `
+    + 'loosening is turned off: the lower-baseline pattern is empty. Revert the change.',
   note_base_missing: (p) => `There is no baseline at \`${p.path}\` on the base branch, so `
     + 'baseline changes are not governed in this run.',
   note_no_token: () => 'No token available, so the base branch baseline was not read and '
     + 'baseline changes are not governed in this run.',
   note_base_invalid: (p) => `The baseline on the base branch is invalid (${p.reason}), so `
     + 'baseline changes are not governed in this run.',
-  reason_label: (p) => `label \`${p.label}\``,
-  reason_title: (p) => `pull request title "${p.title}"`,
+  reason_label: (p) => `label ${codeSpan(String(p.label))}`,
+  reason_title: (p) => `pull request title ${codeSpan(String(p.title))}`,
   col_metric: () => 'Metric',
   col_baseline: () => 'Baseline',
   col_now: () => 'Now',
@@ -66,6 +94,7 @@ const EN = {
   change_tightened: () => 'tightened',
   change_added: () => 'added',
   change_removed: () => 'removed',
+  change_changed: () => 'changed',
   section_changes: () => 'Baseline changes in this pull request',
   section_warnings: () => 'Warnings',
   unlocked_hint: (p) => `Strict mode: ${p.names} improved but the baseline was not updated. `
@@ -83,6 +112,8 @@ const EN = {
   above_max: (p) => `${p.value} is above the absolute maximum ${p.limit}`,
   rule_without_value: (p) => `metric "${p.name}" has a rule but no value in the baseline`,
   report_not_found: (p) => `report not found: ${p.path}`,
+  source_changed_unmeasured: () => 'this pull request changed or removed the source, and the '
+    + 'base branch source was not measured',
 
   baseline_invalid: (p, t) => `The baseline is invalid:\n${issueList(p.issues, t)}`,
   baseline_not_object: () => 'the baseline must be a JSON object',
@@ -98,6 +129,10 @@ const EN = {
   metric_duplicated: (p) => `"${p.name}" is listed more than once`,
   value_not_numeric: (p) => `the baseline value of "${p.name}" is not a number: ${p.value}`,
   metric_not_object: (p) => `metric "${p.name}" must be an object`,
+  metric_name_invalid: (p) => `invalid metric name ${p.name}: a name needs visible text and `
+    + 'no line breaks or other control characters',
+  description_invalid: (p) => `the description of "${p.name}" must be text, got ${p.value}`,
+  schema_invalid: (p) => `$schema must be text, got ${p.value}`,
   direction_invalid: (p) => `the direction of "${p.name}" must be "up" or "down", `
     + `got ${p.value}`,
   tolerance_invalid: (p) => `the tolerance of "${p.name}" must be a number >= 0, got ${p.value}`,
@@ -109,7 +144,7 @@ const EN = {
   unknown_field: (p) => `unknown field "${p.field}" in metric "${p.name}" (typo?)`,
   unknown_root_field: (p) => `unknown field "${p.field}" at the root of the baseline`,
   value_violates_limit: (p) => `the baseline value of "${p.name}" (${p.value}) already `
-    + `breaks its ${p.field} of ${p.limit}; every run fails until it is fixed`,
+    + `breaks its ${p.field} of ${p.limit}; runs fail while the measured value stays outside it`,
 
   metrics_not_object: (p) => `the metrics file ${p.path} must hold a JSON object of `
     + 'metric names to numbers',
@@ -131,7 +166,7 @@ const EN = {
   init_metric_absent: (p) => `metric "${p.name}" is not in the metrics file`,
   init_no_metrics: () => 'no metrics selected; use --up and/or --down',
   init_metric_conflict: (p) => `metric "${p.name}" cannot be in both --up and --down`,
-  git_show_failed: (p) => `could not read ${p.path} at ${p.ref}: ${p.reason}`,
+  git_show_failed: (p, t) => `could not read ${p.path} at ${p.ref}: ${reasonText(p.reason, t)}`,
   file_unreadable: (p) => `could not read ${p.path}: ${p.reason}`,
   json_invalid: (p) => `${p.path} is not valid JSON: ${p.reason}`,
 
@@ -139,10 +174,50 @@ const EN = {
     + `known formats: ${p.known}`,
   extractor_field_unknown: (p) => `format "${p.format}" has no field "${p.field}"; `
     + `known fields: ${p.known}`,
-  extractor_report_unparseable: (p) => `could not parse the ${p.format} report: ${p.reason}`,
+  extractor_report_unparseable: (p, t) => `could not parse the ${p.format} report: `
+    + `${reasonText(p.reason, t)}`,
   extractor_report_empty: (p) => `the ${p.format} report has nothing to measure`,
-  extractor_option_invalid: (p) => `invalid option "${p.option}" for format "${p.format}": `
-    + `${p.reason}`,
+  extractor_option_invalid: (p, t) => `invalid option "${p.option}" for format "${p.format}": `
+    + `${reasonText(p.reason, t)}`,
+
+  reason_value_not_finite: (p) => `the extracted value is not a finite number: ${p.value}`,
+  reason_key_missing: (p) => `missing "${p.path}"`,
+  reason_not_number: (p) => `"${p.path}" is not a finite number`,
+  reason_not_count: (p) => `"${p.path}" is not a non-negative integer`,
+  reason_not_array: (p) => `"${p.path}" is not an array`,
+  reason_not_object: (p) => `"${p.path}" is not an object`,
+  reason_not_array_of_objects: (p) => `"${p.path}" is not an array of objects`,
+  reason_not_string: (p) => `"${p.path}" is not text`,
+  reason_not_text: () => 'the report content is not text',
+  reason_hit_exceeds_total: (p) => `hit count ${p.hit} exceeds total ${p.total}`,
+  reason_pointer_missing: () => 'missing',
+  reason_pointer_not_string: () => 'must be a string',
+  reason_pointer_not_absolute: (p) => `"${p.pointer}" must be empty or start with "/"`,
+  reason_pointer_bad_escape: (p) => `"${p.pointer}" has "~" not followed by "0" or "1"`,
+  reason_pointer_not_found: (p) => `pointer "${p.pointer}" does not exist`,
+  reason_pointer_not_numeric: (p) => `value at "${p.pointer}" is not numeric (found ${p.kind})`,
+  reason_xml_no_element: () => 'no XML element found',
+  reason_xml_root: (p) => `root element is <${p.found}>, expected <${p.expected}>`,
+  reason_attribute_missing: (p) => `missing attribute "${p.name}" on <${p.element}>`,
+  reason_attribute_not_number: (p) => `attribute "${p.name}" is not a number: "${p.value}"`,
+  reason_attribute_not_count: (p) => `attribute "${p.name}" is not a non-negative integer: `
+    + `"${p.value}"`,
+  reason_attribute_out_of_range: (p) => `attribute "${p.name}" is not between ${p.min} and `
+    + `${p.max}: "${p.value}"`,
+  reason_junit_no_suite: () => 'no <testsuites> or <testsuite> element found',
+  reason_lcov_no_record: () => 'no "SF:" record found',
+  reason_lcov_invalid_value: (p) => `invalid "${p.key}" value: "${p.value}"`,
+  reason_levels_invalid: (p) => `must be a non-empty array of ${p.known}`,
+  reason_level_unknown: (p) => `unknown level "${p.level}"`,
+  reason_sarif_version: (p) => `SARIF version "${p.version}" is not supported, only 2.1.0 `
+    + '(for dotnet build, use -p:ErrorLog=<file>.sarif%2Cversion=2.1)',
+  reason_sarif_version_missing: () => 'the SARIF log has no "version"; only 2.1.0 is supported',
+  reason_sarif_execution_failed: (p) => `"${p.run}" reports an unsuccessful tool execution`
+    + withDetails(p.details),
+  reason_eslint_not_array: () => 'expected an array of file results',
+  reason_npm_audit_failed: (p) => `npm audit failed${withDetails(p.details)}`,
+  reason_mutant_status_unknown: (p) => `unknown mutant status "${p.status}" in "${p.path}"`,
+  reason_not_a_revision: () => 'not a revision: it is empty or starts with "-"',
 
   github_api_failed: (p) => `GitHub API ${p.method} ${p.path} returned ${p.status}: ${p.body}`,
   github_repository_missing: () => 'GITHUB_REPOSITORY is not set',
@@ -165,10 +240,29 @@ const EN = {
     + 'without pull request context, so there is no governance or comment in this run.',
   log_pagination_truncated: (p) => `Stopped reading ${p.path} after ${p.pages} pages (safety `
     + 'limit); later pages were ignored.',
+  log_api_retry: (p) => `GitHub API ${p.method} ${p.path} returned ${p.status} `
+    + `(attempt ${p.attempt}); retrying in ${p.seconds} s.`,
+  log_proxy_unsupported: () => 'A proxy variable (HTTPS_PROXY/HTTP_PROXY) is set, but this '
+    + 'Node.js does not route fetch through it, so API requests go direct. If they fail, add '
+    + 'NODE_USE_ENV_PROXY: "1" to the step env.',
+  proxy_invalid: (p) => `the proxy configuration in HTTPS_PROXY/HTTP_PROXY is invalid: `
+    + `${p.reason}`,
+  log_comment_failed_generic: (p) => `Could not post the summary comment (${p.reason}). The `
+    + 'result is still in the job summary.',
+  comment_too_long: (p) => `the comment has ${p.length} characters, above the API limit of `
+    + `${p.max}`,
+  note_comment_abbreviated: () => 'This comment was shortened to fit the size limit for pull '
+    + 'request comments. The full report is in the job summary.',
+  error_node_unsupported: (p) => `quality-ratchet needs Node.js 20 or later; this step runs on `
+    + `${p.version}. On Gitea and Forgejo runners the action runs with the node of the job `
+    + 'image: use an image with Node.js 20 or later.',
   log_baseline_written: (p) => `Updated baseline written to ${p.path}.`,
   cli_written: (p) => `Wrote ${p.path}.`,
-  cli_nothing_to_update: () => 'Nothing to tighten: the baseline already matches the '
+  cli_nothing_to_update: () => 'Nothing to tighten: no metric improved beyond its tolerance.',
+  cli_nothing_to_rebaseline: () => 'Nothing to change: the baseline already matches the '
     + 'measurements.',
+  cli_update_not_lowered: (p) => `Values not lowered: ${p.names}. The check will fail until `
+    + 'they recover; use --allow-lower only if lowering the baseline was decided.',
   cli_migrate_dropped: (p) => `Values without a rule were dropped: ${p.names}.`,
   cli_init_ignored: (p) => `Metrics in the file without a direction were ignored: ${p.names}.`,
   cli_update_missing: (p) => `No measurement for: ${p.names}. Their values were kept.`,
@@ -177,7 +271,7 @@ const EN = {
 /** @type {Record<string, Template>} */
 const PT = {
   title: (p) => (p.name ? `Quality ratchet - ${p.name}` : 'Quality ratchet'),
-  verdict_passed: () => 'Catraca verde. Nenhuma métrica regrediu.',
+  verdict_passed: () => 'Catraca verde. Nenhuma métrica regrediu além da tolerância.',
   verdict_failed: (p) => `Catraca vermelha. ${joinParts([
     p.failures > 0 && `${p.failures} métrica(s) em falha`,
     p.unlocked > 0 && `${p.unlocked} melhoria(s) por fixar`,
@@ -188,14 +282,17 @@ const PT = {
   note_loosen_unauthorised: (p) => `Este pull request afrouxa o baseline (${p.names}) `
     + 'sem autorização. Dá-lhe um título que corresponda ao padrão de descida de baseline, '
     + 'ou reverte a alteração.',
+  note_loosen_disabled: (p) => `Este pull request afrouxa o baseline (${p.names}), mas `
+    + 'afrouxar está desligado: o padrão de descida de baseline está vazio. Reverte a '
+    + 'alteração.',
   note_base_missing: (p) => `Não existe baseline em \`${p.path}\` no ramo base, por isso `
     + 'as alterações ao baseline não são governadas nesta execução.',
   note_no_token: () => 'Sem token, o baseline do ramo base não foi lido e as alterações ao '
     + 'baseline não são governadas nesta execução.',
   note_base_invalid: (p) => `O baseline do ramo base é inválido (${p.reason}), por isso as `
     + 'alterações ao baseline não são governadas nesta execução.',
-  reason_label: (p) => `label \`${p.label}\``,
-  reason_title: (p) => `título do pull request "${p.title}"`,
+  reason_label: (p) => `label ${codeSpan(String(p.label))}`,
+  reason_title: (p) => `título do pull request ${codeSpan(String(p.title))}`,
   col_metric: () => 'Métrica',
   col_baseline: () => 'Baseline',
   col_now: () => 'Agora',
@@ -208,6 +305,7 @@ const PT = {
   change_tightened: () => 'apertada',
   change_added: () => 'nova',
   change_removed: () => 'removida',
+  change_changed: () => 'alterada',
   section_changes: () => 'Alterações ao baseline neste pull request',
   section_warnings: () => 'Avisos',
   unlocked_hint: (p) => `Modo estrito: ${p.names} melhorou mas o baseline não foi `
@@ -225,6 +323,8 @@ const PT = {
   above_max: (p) => `${p.value} está acima do máximo absoluto ${p.limit}`,
   rule_without_value: (p) => `a métrica "${p.name}" tem regra mas não tem valor no baseline`,
   report_not_found: (p) => `relatório não encontrado: ${p.path}`,
+  source_changed_unmeasured: () => 'este pull request mudou ou retirou a source, e a source '
+    + 'do ramo base não foi medida',
 
   baseline_invalid: (p, t) => `O baseline é inválido:\n${issueList(p.issues, t)}`,
   baseline_not_object: () => 'o baseline tem de ser um objecto JSON',
@@ -240,6 +340,10 @@ const PT = {
   metric_duplicated: (p) => `"${p.name}" aparece mais de uma vez`,
   value_not_numeric: (p) => `o valor de "${p.name}" no baseline não é um número: ${p.value}`,
   metric_not_object: (p) => `a métrica "${p.name}" tem de ser um objecto`,
+  metric_name_invalid: (p) => `nome de métrica inválido ${p.name}: um nome precisa de texto `
+    + 'visível e de nenhuma quebra de linha ou outro carácter de controlo',
+  description_invalid: (p) => `a descrição de "${p.name}" tem de ser texto, veio ${p.value}`,
+  schema_invalid: (p) => `$schema tem de ser texto, veio ${p.value}`,
   direction_invalid: (p) => `a direcção de "${p.name}" tem de ser "up" ou "down", `
     + `veio ${p.value}`,
   tolerance_invalid: (p) => `a tolerância de "${p.name}" tem de ser um número >= 0, `
@@ -253,7 +357,7 @@ const PT = {
   unknown_field: (p) => `campo desconhecido "${p.field}" na métrica "${p.name}" (gralha?)`,
   unknown_root_field: (p) => `campo desconhecido "${p.field}" na raiz do baseline`,
   value_violates_limit: (p) => `o valor de "${p.name}" no baseline (${p.value}) já viola o `
-    + `${p.field} de ${p.limit}; todas as execuções falham até ser corrigido`,
+    + `${p.field} de ${p.limit}; as execuções falham enquanto o valor medido estiver fora dele`,
 
   metrics_not_object: (p) => `o ficheiro de métricas ${p.path} tem de conter um objecto JSON `
     + 'de nomes de métricas para números',
@@ -276,7 +380,8 @@ const PT = {
   init_metric_absent: (p) => `a métrica "${p.name}" não está no ficheiro de métricas`,
   init_no_metrics: () => 'nenhuma métrica seleccionada; usa --up e/ou --down',
   init_metric_conflict: (p) => `a métrica "${p.name}" não pode estar em --up e em --down`,
-  git_show_failed: (p) => `não foi possível ler ${p.path} em ${p.ref}: ${p.reason}`,
+  git_show_failed: (p, t) => `não foi possível ler ${p.path} em ${p.ref}: `
+    + `${reasonText(p.reason, t)}`,
   file_unreadable: (p) => `não foi possível ler ${p.path}: ${p.reason}`,
   json_invalid: (p) => `${p.path} não é JSON válido: ${p.reason}`,
 
@@ -284,11 +389,53 @@ const PT = {
     + `formatos conhecidos: ${p.known}`,
   extractor_field_unknown: (p) => `o formato "${p.format}" não tem o campo "${p.field}"; `
     + `campos conhecidos: ${p.known}`,
-  extractor_report_unparseable: (p) => `não foi possível interpretar o relatório ${p.format}: `
-    + `${p.reason}`,
+  extractor_report_unparseable: (p, t) => `não foi possível interpretar o relatório `
+    + `${p.format}: ${reasonText(p.reason, t)}`,
   extractor_report_empty: (p) => `o relatório ${p.format} não tem nada para medir`,
-  extractor_option_invalid: (p) => `opção "${p.option}" inválida para o formato `
-    + `"${p.format}": ${p.reason}`,
+  extractor_option_invalid: (p, t) => `opção "${p.option}" inválida para o formato `
+    + `"${p.format}": ${reasonText(p.reason, t)}`,
+
+  reason_value_not_finite: (p) => `o valor extraído não é um número finito: ${p.value}`,
+  reason_key_missing: (p) => `falta "${p.path}"`,
+  reason_not_number: (p) => `"${p.path}" não é um número finito`,
+  reason_not_count: (p) => `"${p.path}" não é um inteiro não negativo`,
+  reason_not_array: (p) => `"${p.path}" não é uma lista`,
+  reason_not_object: (p) => `"${p.path}" não é um objecto`,
+  reason_not_array_of_objects: (p) => `"${p.path}" não é uma lista de objectos`,
+  reason_not_string: (p) => `"${p.path}" não é texto`,
+  reason_not_text: () => 'o conteúdo do relatório não é texto',
+  reason_hit_exceeds_total: (p) => `a contagem de atingidos ${p.hit} excede o total ${p.total}`,
+  reason_pointer_missing: () => 'em falta',
+  reason_pointer_not_string: () => 'tem de ser texto',
+  reason_pointer_not_absolute: (p) => `"${p.pointer}" tem de ser vazio ou começar por "/"`,
+  reason_pointer_bad_escape: (p) => `"${p.pointer}" tem "~" sem "0" nem "1" a seguir`,
+  reason_pointer_not_found: (p) => `o ponteiro "${p.pointer}" não existe`,
+  reason_pointer_not_numeric: (p) => `o valor em "${p.pointer}" não é numérico `
+    + `(encontrado: ${p.kind})`,
+  reason_xml_no_element: () => 'não foi encontrado nenhum elemento XML',
+  reason_xml_root: (p) => `o elemento raiz é <${p.found}>, esperava-se <${p.expected}>`,
+  reason_attribute_missing: (p) => `falta o atributo "${p.name}" em <${p.element}>`,
+  reason_attribute_not_number: (p) => `o atributo "${p.name}" não é um número: "${p.value}"`,
+  reason_attribute_not_count: (p) => `o atributo "${p.name}" não é um inteiro não negativo: `
+    + `"${p.value}"`,
+  reason_attribute_out_of_range: (p) => `o atributo "${p.name}" não está entre ${p.min} e `
+    + `${p.max}: "${p.value}"`,
+  reason_junit_no_suite: () => 'não foi encontrado nenhum elemento <testsuites> nem <testsuite>',
+  reason_lcov_no_record: () => 'não foi encontrado nenhum registo "SF:"',
+  reason_lcov_invalid_value: (p) => `valor de "${p.key}" inválido: "${p.value}"`,
+  reason_levels_invalid: (p) => `tem de ser uma lista não vazia de ${p.known}`,
+  reason_level_unknown: (p) => `nível desconhecido "${p.level}"`,
+  reason_sarif_version: (p) => `a versão SARIF "${p.version}" não é suportada, só a 2.1.0 `
+    + '(no dotnet build, usa -p:ErrorLog=<ficheiro>.sarif%2Cversion=2.1)',
+  reason_sarif_version_missing: () => 'o registo SARIF não tem "version"; só a 2.1.0 é '
+    + 'suportada',
+  reason_sarif_execution_failed: (p) => `"${p.run}" indica que a execução da ferramenta falhou`
+    + withDetails(p.details),
+  reason_eslint_not_array: () => 'esperava-se uma lista de resultados por ficheiro',
+  reason_npm_audit_failed: (p) => `o npm audit falhou${withDetails(p.details)}`,
+  reason_mutant_status_unknown: (p) => `estado de mutante desconhecido "${p.status}" em `
+    + `"${p.path}"`,
+  reason_not_a_revision: () => 'não é uma revisão: está vazia ou começa por "-"',
 
   github_api_failed: (p) => `a API do GitHub ${p.method} ${p.path} devolveu ${p.status}: `
     + `${p.body}`,
@@ -313,9 +460,28 @@ const PT = {
     + 'execução segue sem contexto de pull request, por isso sem governação nem comentário.',
   log_pagination_truncated: (p) => `A leitura de ${p.path} parou ao fim de ${p.pages} páginas `
     + '(limite de segurança); as páginas seguintes foram ignoradas.',
+  log_api_retry: (p) => `A API do GitHub ${p.method} ${p.path} devolveu ${p.status} `
+    + `(tentativa ${p.attempt}); nova tentativa dentro de ${p.seconds} s.`,
+  log_proxy_unsupported: () => 'Está definida uma variável de proxy (HTTPS_PROXY/HTTP_PROXY), '
+    + 'mas este Node.js não a aplica ao fetch, por isso os pedidos à API vão directos. Se '
+    + 'falharem, acrescenta NODE_USE_ENV_PROXY: "1" ao env do step.',
+  proxy_invalid: (p) => `a configuração de proxy em HTTPS_PROXY/HTTP_PROXY é inválida: `
+    + `${p.reason}`,
+  log_comment_failed_generic: (p) => 'Não foi possível publicar o comentário de sumário '
+    + `(${p.reason}). O resultado continua no sumário do job.`,
+  comment_too_long: (p) => `o comentário tem ${p.length} caracteres, acima do limite de `
+    + `${p.max} da API`,
+  note_comment_abbreviated: () => 'Este comentário foi abreviado para caber no limite de '
+    + 'tamanho dos comentários. O relatório completo está no sumário do job.',
+  error_node_unsupported: (p) => `o quality-ratchet precisa do Node.js 20 ou posterior; este `
+    + `passo corre no ${p.version}. Nos runners do Gitea e do Forgejo a action corre com o node `
+    + 'da imagem do job: usa uma imagem com Node.js 20 ou posterior.',
   log_baseline_written: (p) => `Baseline actualizado escrito em ${p.path}.`,
   cli_written: (p) => `Escrito ${p.path}.`,
-  cli_nothing_to_update: () => 'Nada a apertar: o baseline já corresponde às medições.',
+  cli_nothing_to_update: () => 'Nada a apertar: nenhuma métrica melhorou além da tolerância.',
+  cli_nothing_to_rebaseline: () => 'Nada a alterar: o baseline já corresponde às medições.',
+  cli_update_not_lowered: (p) => `Valores não baixados: ${p.names}. O check vai falhar até `
+    + 'recuperarem; usa --allow-lower só se foi decidido baixar o baseline.',
   cli_migrate_dropped: (p) => `Valores sem regra foram descartados: ${p.names}.`,
   cli_init_ignored: (p) => `Métricas do ficheiro sem direcção foram ignoradas: ${p.names}.`,
   cli_update_missing: (p) => `Sem medição para: ${p.names}. Os valores anteriores mantêm-se.`,

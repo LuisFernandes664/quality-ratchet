@@ -8,15 +8,28 @@ import {
   authoriseLowering,
   diffBaselines,
   loosenedChanges,
+  movedSources,
   resolveContract,
   shouldBypass,
 } from './governance.js';
+import { ownValue } from './guards.js';
 import { tightenBaseline } from './tighten.js';
 
 /** @typedef {import('./types.js').Baseline} Baseline */
 /** @typedef {import('./types.js').Measurement} Measurement */
 /** @typedef {import('./types.js').Report} Report */
 /** @typedef {import('./types.js').Decision} Decision */
+/** @typedef {import('./types.js').Outcome} Outcome */
+
+/**
+ * Medição de uma métrica cuja source o PR mudou, quando a source do ramo base não foi
+ * medida (o chamador não passou `baseMeasurements`).
+ * @type {Measurement}
+ */
+const UNMEASURED = Object.freeze({
+  origin: 'source',
+  error: Object.freeze({ code: 'source_changed_unmeasured', params: Object.freeze({}) }),
+});
 
 /**
  * @typedef {object} RatchetOptions
@@ -30,24 +43,43 @@ import { tightenBaseline } from './tighten.js';
  * @typedef {object} RatchetInput
  * @property {Baseline} head baseline do checkout, o que vai ficar no ramo
  * @property {Baseline|null} base baseline do ramo base; null desliga a governação
- * @property {Record<string, Measurement>} measurements
+ * @property {Record<string, Measurement>} measurements medições com as sources do PR
+ * @property {Record<string, Measurement>} [baseMeasurements] medições com as sources do
+ *   ramo base, para as métricas cuja source o PR mudou ou retirou (ver collectMeasurements)
  * @property {string[]} [untracked] métricas medidas que o baseline não segue
  * @property {{title?: string, labels?: string[]}} [context] dados do PR, se houver
  * @property {RatchetOptions} [options]
  */
 
 /**
- * Corre a catraca.
+ * Corre a catraca. A comparação e o baseline apertado usam o mesmo contrato efectivo:
+ * quando o afrouxamento não foi autorizado, o baseline sugerido parte da versão mais
+ * exigente (a que o PR tem de ter para passar), e não do baseline do PR.
  * @param {RatchetInput} input
  * @returns {Report}
  */
 export function runRatchet(input) {
-  const { head, measurements, context = {}, options = {} } = input;
+  const { head, context = {}, options = {} } = input;
   const governance = governBaseline(input.base, head, context.title, options);
+  const measurements = contractMeasurements(input, governance.contract);
   const outcome = compareAll(governance.contract, measurements, { strict: options.strict });
   const passed = outcome.passed && !governance.blocked;
   const bypass = decideBypass(passed, context.labels, options.bypassLabel);
-  const tightening = tightenBaseline(head, measurements, { frozenAt: options.frozenAt });
+  const { frozenAt } = options;
+  const tightening = tightenBaseline(governance.contract, measurements, { frozenAt });
+  return assembleReport(input, governance, { outcome, bypass, passed, tightening });
+}
+
+/**
+ * Junta o resultado de cada passo no relatório final.
+ * @param {RatchetInput} input
+ * @param {Governance} governance
+ * @param {{outcome: Outcome, bypass: Decision, passed: boolean,
+ *   tightening: {baseline: Baseline, tightened: string[]}}} steps
+ * @returns {Report}
+ */
+function assembleReport(input, governance, { outcome, bypass, passed, tightening }) {
+  const contracted = new Set(governance.contract.metrics.map((rule) => rule.name));
   return {
     ...governance.report,
     outcome,
@@ -56,11 +88,35 @@ export function runRatchet(input) {
     ok: passed || bypass.granted,
     newBaseline: tightening.baseline,
     tightened: tightening.tightened,
-    untracked: input.untracked ?? [],
-    warnings: head.warnings,
-    frozenAt: head.frozenAt,
+    untracked: (input.untracked ?? []).filter((name) => !contracted.has(name)),
+    warnings: input.head.warnings,
+    frozenAt: input.head.frozenAt,
   };
 }
+
+/**
+ * Medições que correspondem ao contrato. Quando o contrato mantém a source do ramo base
+ * numa métrica cuja source o PR mudou ou retirou, o valor tem de vir dessa source e não da
+ * do PR; sem essa medição, a métrica fica em falta com o motivo, em vez de mostrar um
+ * valor lido de outro relatório.
+ * @param {RatchetInput} input
+ * @param {Baseline} contract
+ * @returns {Record<string, Measurement>}
+ */
+function contractMeasurements(input, contract) {
+  if (contract === input.head || !input.base) return input.measurements;
+  const fromBase = input.baseMeasurements ?? {};
+  const replaced = movedSources(input.base, input.head)
+    .map((rule) => [rule.name, ownValue(fromBase, rule.name) ?? UNMEASURED]);
+  return { ...input.measurements, ...Object.fromEntries(replaced) };
+}
+
+/**
+ * @typedef {object} Governance
+ * @property {Baseline} contract contrato efectivo
+ * @property {boolean} blocked o PR afrouxa o baseline sem autorização
+ * @property {Pick<Report, 'changes'|'loosened'|'authorisation'|'loosenable'|'governed'>} report
+ */
 
 /**
  * Compara o baseline do PR com o do ramo base e decide o contrato efectivo.
@@ -68,8 +124,7 @@ export function runRatchet(input) {
  * @param {Baseline} head
  * @param {string|undefined} title
  * @param {RatchetOptions} options
- * @returns {{contract: Baseline, blocked: boolean, report: Pick<Report,
- *   'changes'|'loosened'|'authorisation'|'governed'>}}
+ * @returns {Governance}
  */
 function governBaseline(base, head, title, options) {
   const changes = base ? diffBaselines(base, head).filter((c) => c.kind !== 'unchanged') : [];
@@ -80,7 +135,7 @@ function governBaseline(base, head, title, options) {
   return {
     contract: resolveContract(base, head, granted),
     blocked: loosened.length > 0 && !granted,
-    report: { changes, loosened, authorisation, governed: base !== null },
+    report: { changes, loosened, authorisation, loosenable: pattern !== '', governed: !!base },
   };
 }
 

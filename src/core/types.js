@@ -35,6 +35,7 @@
  * @property {number} [target] objectivo, apenas informativo
  * @property {MetricSource} [source]
  * @property {string} [description] texto livre, apenas informativo
+ * @property {Record<string, unknown>} [extra] campos desconhecidos, mantidos ao reescrever
  */
 
 /**
@@ -43,8 +44,12 @@
  * @property {1|2} version formato original do ficheiro
  * @property {string} [frozenAt]
  * @property {string} [schema] valor original de "$schema"
+ * @property {Record<string, unknown>} [extra] campos desconhecidos da raiz, mantidos ao
+ *   reescrever
+ * @property {boolean} [versionDeclared] (v1) o ficheiro declarava `version`
+ * @property {string[]} [valueOrder] (v1) ordem original das chaves de `metrics`
  * @property {MetricRule[]} metrics por ordem de declaração
- * @property {Record<string, number>} untracked valores do v1 sem regra associada
+ * @property {Record<string, unknown>} untracked valores do v1 sem regra associada
  * @property {Issue[]} warnings
  */
 
@@ -86,7 +91,8 @@
  */
 
 /**
- * @typedef {'loosened'|'tightened'|'added'|'removed'|'unchanged'} ChangeKind
+ * 'changed' é uma alteração só a campos informativos (`target`, `description`).
+ * @typedef {'loosened'|'tightened'|'changed'|'added'|'removed'|'unchanged'} ChangeKind
  */
 
 /**
@@ -96,6 +102,7 @@
  * @property {ChangeKind} kind
  * @property {string[]} loosenedFields
  * @property {string[]} tightenedFields
+ * @property {string[]} changedFields campos informativos alterados
  * @property {MetricRule|null} before
  * @property {MetricRule|null} after
  */
@@ -113,13 +120,15 @@
  * @property {BaselineChange[]} changes alterações relevantes ao baseline (sem 'unchanged')
  * @property {BaselineChange[]} loosened alterações que afrouxam o contrato
  * @property {Decision} authorisation autorização para afrouxar o baseline
+ * @property {boolean} loosenable há um padrão de título que autoriza afrouxar (não vazio)
  * @property {Decision} bypass perdão de hotfix
  * @property {boolean} governed true quando havia baseline do ramo base para comparar
  * @property {boolean} passed nenhuma falha, nenhum afrouxamento não autorizado
  * @property {boolean} ok passed ou perdoado
- * @property {Baseline} newBaseline baseline do PR com as melhorias fixadas
- * @property {string[]} tightened métricas cujo valor o newBaseline apertou
- * @property {string[]} untracked métricas medidas que o baseline não segue
+ * @property {Baseline} newBaseline contrato efectivo (o baseline do PR, ou a versão mais
+ *   exigente de cada campo quando o afrouxamento não foi autorizado) com as melhorias fixadas
+ * @property {string[]} tightened métricas cujo valor o newBaseline aperta face ao contrato
+ * @property {string[]} untracked métricas medidas que o contrato não segue
  * @property {Issue[]} warnings
  * @property {string} [frozenAt]
  */

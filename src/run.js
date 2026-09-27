@@ -7,6 +7,8 @@ import path from 'node:path';
 
 import { parseBaseline } from './core/baseline.js';
 import { BaselineError, ExtractorError, MetricsError } from './core/errors.js';
+import { movedSources } from './core/governance.js';
+import { ownValue } from './core/guards.js';
 import { parseMetricsFile } from './core/measurements.js';
 import { extract } from './extractors/index.js';
 
@@ -15,6 +17,9 @@ import { extract } from './extractors/index.js';
 /** @typedef {import('./core/types.js').Measurement} Measurement */
 /** @typedef {import('./core/types.js').Issue} Issue */
 /** @typedef {typeof BaselineError | typeof MetricsError} FileErrorClass */
+
+/** Métrica do ficheiro de métricas que não veio nele. */
+const NO_VALUE = Object.freeze(/** @type {Measurement} */ ({ origin: 'file' }));
 
 /**
  * Acesso ao sistema de ficheiros.
@@ -70,31 +75,75 @@ export async function loadBaseline(fs, filePath, options = {}) {
  * @typedef {object} CollectOptions
  * @property {string} [metricsPath] ficheiro de métricas plano; opcional se todas têm source
  * @property {string} baselineDir pasta do baseline, base dos caminhos das sources
+ * @property {Baseline|null} [base] baseline do ramo base, quando há governação
  */
 
 /**
- * Reúne as medições desta execução: ficheiro de métricas e relatórios das sources.
+ * @typedef {object} Collected
+ * @property {Record<string, Measurement>} measurements medições com as sources do baseline
+ * @property {Record<string, Measurement>} baseMeasurements medições com as sources do ramo
+ *   base, só para as métricas cuja source o PR mudou ou retirou (vazio sem `base`)
+ * @property {string[]} untracked métricas do ficheiro que o baseline não segue
+ */
+
+/**
+ * Reúne as medições desta execução: ficheiro de métricas e relatórios das sources. Com o
+ * baseline do ramo base, mede também as métricas cuja source o PR mudou ou retirou com a
+ * source do ramo base, porque é essa que conta enquanto a mudança não for autorizada.
  * @param {FileSystem} fs
  * @param {Baseline} baseline
  * @param {CollectOptions} options
- * @returns {Promise<{measurements: Record<string, Measurement>, untracked: string[]}>}
+ * @returns {Promise<Collected>}
  * @throws {MetricsError} ficheiro de métricas em falta ou métrica com duas origens
  */
 export async function collectMeasurements(fs, baseline, options) {
   const fromFile = await readMetricsFile(fs, baseline, options.metricsPath);
   const sourced = baseline.metrics.filter((rule) => rule.source !== undefined);
-  const fromSources = await Promise.all(sourced.map(async (rule) => {
-    const measurement = await measureSource(fs, rule, options.baselineDir);
-    return /** @type {[string, Measurement]} */ ([rule.name, measurement]);
-  }));
+  const fromSources = await measureRules(fs, sourced, options.baselineDir);
   for (const [name] of fromSources) {
     if (Object.hasOwn(fromFile, name)) throw new MetricsError('metric_defined_twice', { name });
   }
   const tracked = new Set(baseline.metrics.map((rule) => rule.name));
   return {
     measurements: Object.fromEntries([...Object.entries(fromFile), ...fromSources]),
+    baseMeasurements: await measureBase(fs, baseline, fromFile, options),
     untracked: Object.keys(fromFile).filter((name) => !tracked.has(name)),
   };
+}
+
+/**
+ * Mede cada regra a partir da sua source.
+ * @param {FileSystem} fs
+ * @param {MetricRule[]} rules regras com source
+ * @param {string} baselineDir
+ * @returns {Promise<Array<[string, Measurement]>>}
+ */
+function measureRules(fs, rules, baselineDir) {
+  return Promise.all(rules.map(async (rule) => (
+    /** @type {[string, Measurement]} */ ([rule.name, await measureSource(fs, rule, baselineDir)])
+  )));
+}
+
+/**
+ * Medições das métricas do ramo base cuja source o PR mudou ou retirou, feitas com a
+ * source do ramo base (o baseline do ramo base está no mesmo caminho, por isso os
+ * relatórios resolvem-se a partir da mesma pasta). Uma métrica que no ramo base não tinha
+ * source vem do ficheiro de métricas, ou fica sem valor. Não há verificação de origem
+ * dupla: a source do ramo base prevalece sobre o ficheiro.
+ * @param {FileSystem} fs
+ * @param {Baseline} head
+ * @param {Record<string, Measurement>} fromFile
+ * @param {CollectOptions} options
+ * @returns {Promise<Record<string, Measurement>>}
+ */
+async function measureBase(fs, head, fromFile, options) {
+  if (!options.base) return {};
+  const moved = movedSources(options.base, head);
+  const withSource = moved.filter((rule) => rule.source !== undefined);
+  const fromSources = await measureRules(fs, withSource, options.baselineDir);
+  const fromFileOnly = moved.filter((rule) => rule.source === undefined).map((rule) => (
+    /** @type {[string, Measurement]} */ ([rule.name, ownValue(fromFile, rule.name) ?? NO_VALUE])));
+  return Object.fromEntries([...fromFileOnly, ...fromSources]);
 }
 
 /**

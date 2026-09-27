@@ -1,3 +1,4 @@
+// @ts-check
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -11,18 +12,28 @@ import { BaselineError } from '../../src/core/errors.js';
 import { V1_RAW } from '../helpers.js';
 
 /**
+ * Problemas de um BaselineError lançado por `fn`.
+ * @param {() => unknown} fn
+ * @returns {Array<{code: string, params: Record<string, unknown>}>}
+ */
+function issuesOf(fn) {
+  try {
+    fn();
+  } catch (error) {
+    assert.ok(error instanceof BaselineError);
+    return /** @type {Array<{code: string, params: Record<string, unknown>}>} */ (
+      error.params.issues);
+  }
+  assert.fail('era esperado um BaselineError');
+}
+
+/**
  * Códigos dos problemas de um BaselineError lançado por `fn`.
  * @param {() => unknown} fn
  * @returns {string[]}
  */
 function issueCodes(fn) {
-  try {
-    fn();
-  } catch (error) {
-    assert.ok(error instanceof BaselineError);
-    return /** @type {Array<{code: string}>} */ (error.params.issues).map((i) => i.code);
-  }
-  assert.fail('era esperado um BaselineError');
+  return issuesOf(fn).map((item) => item.code);
 }
 
 describe('parseBaseline v1', () => {
@@ -108,6 +119,18 @@ describe('parseBaseline v1', () => {
       'rule_without_value',
     ]);
   });
+
+  test('nome de regra com quebra de linha e erro', () => {
+    const raw = { metrics: { 'a\nb': 1 }, rules: { monotonic_up: ['a\nb'] } };
+
+    assert.deepEqual(issueCodes(() => parseBaseline(raw)), ['metric_name_invalid']);
+  });
+
+  test('$schema que nao e texto e erro', () => {
+    const raw = { $schema: {}, metrics: { a: 1 }, rules: { monotonic_up: ['a'] } };
+
+    assert.deepEqual(issueCodes(() => parseBaseline(raw)), ['schema_invalid']);
+  });
 });
 
 describe('parseBaseline v2', () => {
@@ -132,9 +155,35 @@ describe('parseBaseline v2', () => {
   });
 
   test('detecta o formato v2 pela forma das metricas sem campo version', () => {
-    const { version, ...withoutVersion } = raw;
+    const { version: _version, ...withoutVersion } = raw;
 
     assert.equal(parseBaseline(withoutVersion).version, 2);
+  });
+
+  test('le como v2 metricas-objecto com uma chave rules esquecida', () => {
+    const leftover = {
+      metrics: { a: { value: 1, direction: 'up' } },
+      rules: { monotonic_up: ['a'] },
+    };
+
+    assert.equal(parseBaseline(leftover).version, 2);
+  });
+
+  test('a chave rules esquecida num v2 gera aviso', () => {
+    const leftover = { metrics: { a: { value: 1, direction: 'up' } }, rules: {} };
+
+    assert.deepEqual(parseBaseline(leftover).warnings, [
+      { code: 'unknown_root_field', params: { field: 'rules' } },
+    ]);
+  });
+
+  test('metricas mistas com rules continuam a ser v1', () => {
+    const mixed = {
+      metrics: { a: { value: 1, direction: 'up' }, b: 2 },
+      rules: { monotonic_up: ['a', 'b'] },
+    };
+
+    assert.deepEqual(issueCodes(() => parseBaseline(mixed)), ['value_not_numeric']);
   });
 
   test('le a source da metrica', () => {
@@ -228,6 +277,72 @@ describe('parseBaseline v2', () => {
     assert.deepEqual(issueCodes(() => parseBaseline(bad)), ['frozen_at_invalid']);
   });
 
+  test('nome de metrica com quebra de linha e erro', () => {
+    const bad = { metrics: { 'x`\n\n<!--': { value: 1, direction: 'up' } } };
+
+    assert.deepEqual(issueCodes(() => parseBaseline(bad)), ['metric_name_invalid']);
+  });
+
+  test('nome de metrica com retorno de carro e erro', () => {
+    const bad = { metrics: { 'a\rb': { value: 1, direction: 'up' } } };
+
+    assert.deepEqual(issueCodes(() => parseBaseline(bad)), ['metric_name_invalid']);
+  });
+
+  test('nome de metrica vazio e erro', () => {
+    const bad = { version: 2, metrics: { '': { value: 1, direction: 'up' } } };
+
+    assert.deepEqual(issueCodes(() => parseBaseline(bad)), ['metric_name_invalid']);
+  });
+
+  test('o erro de nome mostra o nome escapado', () => {
+    const bad = { metrics: { 'a\nb': { value: 1, direction: 'up' } } };
+
+    assert.deepEqual(issuesOf(() => parseBaseline(bad)), [
+      { code: 'metric_name_invalid', params: { name: '"a\\nb"' } },
+    ]);
+  });
+
+  test('nomes com | e crases continuam validos', () => {
+    const rule = { value: 1, direction: 'up' };
+
+    const raw = { metrics: { 'a|b': rule, 'c`d': rule } };
+
+    assert.deepEqual(parseBaseline(raw).metrics.map((rule) => rule.name), ['a|b', 'c`d']);
+  });
+
+  test('description que nao e texto e erro', () => {
+    const bad = { metrics: { a: { value: 1, direction: 'up', description: 5 } } };
+
+    assert.deepEqual(issueCodes(() => parseBaseline(bad)), ['description_invalid']);
+  });
+
+  test('$schema que nao e texto e erro', () => {
+    const bad = { $schema: 5, metrics: { a: { value: 1, direction: 'up' } } };
+
+    assert.deepEqual(issueCodes(() => parseBaseline(bad)), ['schema_invalid']);
+  });
+
+  test('chave desconhecida em source gera aviso', () => {
+    const source = { format: 'lcov', path: 'l.info', feild: 'branches' };
+
+    assert.deepEqual(parseBaseline({ metrics: { c: { value: 1, direction: 'up', source } } })
+      .warnings, [{ code: 'unknown_field', params: { name: 'c', field: 'source.feild' } }]);
+  });
+
+  test('source com todos os campos conhecidos nao gera avisos', () => {
+    const sarif = { format: 'sarif', path: 's.sarif', field: 'count', levels: ['error'] };
+    const json = { format: 'json', path: 'm.json', pointer: '/a' };
+    const raw = {
+      metrics: {
+        s: { value: 1, direction: 'down', source: sarif },
+        j: { value: 1, direction: 'up', source: json },
+      },
+    };
+
+    assert.deepEqual(parseBaseline(raw).warnings, []);
+  });
+
   test('nome de metrica __proto__ nao contamina o prototipo', () => {
     const tricky = JSON.parse('{"metrics": {"__proto__": {"value": 1, "direction": "up"}}}');
 
@@ -246,6 +361,77 @@ describe('serializeBaseline', () => {
     const raw = { version: 2, frozen_at: 'x', metrics: { a: { value: 1, direction: 'up' } } };
 
     assert.deepEqual(serializeBaseline(parseBaseline(raw)), raw);
+  });
+
+  test('v2 mantem os campos desconhecidos da raiz', () => {
+    const raw = { $comment: 'nota', version: 2, metrics: { a: { value: 1, direction: 'up' } } };
+
+    assert.deepEqual(serializeBaseline(parseBaseline(raw)), raw);
+  });
+
+  test('v2 mantem os campos desconhecidos da metrica, depois dos conhecidos', () => {
+    const raw = { version: 2, metrics: { a: { owner: 'qa', value: 1, direction: 'up' } } };
+
+    const out = serializeBaseline(parseBaseline(raw));
+
+    assert.equal(JSON.stringify(out.metrics), '{"a":{"value":1,"direction":"up","owner":"qa"}}');
+  });
+
+  test('v2 mantem as chaves desconhecidas de source', () => {
+    const source = { format: 'lcov', path: 'l.info', feild: 'branches' };
+    const raw = { version: 2, metrics: { a: { value: 1, direction: 'up', source } } };
+
+    assert.deepEqual(serializeBaseline(parseBaseline(raw)), raw);
+  });
+
+  test('v1 mantem version 1 quando estava declarado', () => {
+    const raw = { version: 1, ...V1_RAW };
+
+    assert.equal(serializeBaseline(parseBaseline(raw)).version, 1);
+  });
+
+  test('v1 sem version nao ganha version', () => {
+    assert.equal('version' in serializeBaseline(parseBaseline(V1_RAW)), false);
+  });
+
+  test('v1 mantem a ordem original dos valores', () => {
+    const raw = {
+      metrics: { a: 1, b: 2, c: 3 },
+      rules: { monotonic_up: ['a', 'c'], monotonic_down: ['b'] },
+    };
+
+    assert.deepEqual(Object.keys(serializeBaseline(parseBaseline(raw)).metrics ?? {}), [
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
+  test('v1 mantem valores sem regra que nao sao numeros', () => {
+    const raw = { metrics: { a: 1, note: 'legacy' }, rules: { monotonic_up: ['a'] } };
+
+    assert.deepEqual(serializeBaseline(parseBaseline(raw)).metrics, { a: 1, note: 'legacy' });
+  });
+
+  test('v1 nao acrescenta uma lista de regras vazia', () => {
+    const raw = { metrics: { a: 1 }, rules: { monotonic_down: ['a'] } };
+
+    assert.deepEqual(serializeBaseline(parseBaseline(raw)).rules, { monotonic_down: ['a'] });
+  });
+
+  test('v1 mantem os campos desconhecidos da raiz', () => {
+    const raw = { ...V1_RAW, notes: 'x' };
+
+    assert.equal(serializeBaseline(parseBaseline(raw)).notes, 'x');
+  });
+
+  test('v1 escreve no fim as metricas que nao estavam nos valores', () => {
+    const baseline = parseBaseline(V1_RAW);
+    const extra = { name: 'nova', value: 1, direction: /** @type {const} */ ('up'), tolerance: 0 };
+
+    const out = serializeBaseline({ ...baseline, metrics: [...baseline.metrics, extra] });
+
+    assert.equal(Object.keys(out.metrics ?? {}).at(-1), 'nova');
   });
 
   test('v2 preserva $schema, limites, objectivo, source e descricao', () => {
@@ -280,6 +466,18 @@ describe('migrateToV2', () => {
     const raw = { ...V1_RAW, metrics: { ...V1_RAW.metrics, extra: 3 } };
 
     assert.deepEqual(migrateToV2(parseBaseline(raw)).dropped, ['extra']);
+  });
+
+  test('devolve tambem os valores sem regra que nao sao numeros', () => {
+    const raw = { ...V1_RAW, metrics: { ...V1_RAW.metrics, note: 'legacy' } };
+
+    assert.deepEqual(migrateToV2(parseBaseline(raw)).dropped, ['note']);
+  });
+
+  test('mantem os campos desconhecidos da raiz', () => {
+    const { baseline } = migrateToV2(parseBaseline({ ...V1_RAW, notes: 'x' }));
+
+    assert.equal(serializeBaseline(baseline).notes, 'x');
   });
 });
 

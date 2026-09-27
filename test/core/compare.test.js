@@ -1,3 +1,4 @@
+// @ts-check
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -133,6 +134,21 @@ describe('evaluate', () => {
 
   test('o objectivo acompanha o resultado', () => {
     assert.equal(evaluate(rule, { value: 70, origin: 'file' }).target, 90);
+  });
+
+  test('string que transborda para infinito e invalida', () => {
+    const result = evaluate(rule, { value: '1e400', origin: 'file' });
+
+    assert.deepEqual([result.status, result.detail?.params], [
+      Status.INVALID,
+      { value: '"1e400"' },
+    ]);
+  });
+
+  test('numero infinito aparece como Infinity no motivo', () => {
+    const result = evaluate(rule, { value: Infinity, origin: 'file' });
+
+    assert.deepEqual(result.detail?.params, { value: 'Infinity' });
   });
 
   test('regra sem valor fica em falta com o motivo', () => {

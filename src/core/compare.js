@@ -54,7 +54,7 @@ export function exceedsTolerance(delta, tolerance) {
 }
 
 /**
- * Compara uma métrica com a sua regra. Uma métrica em falta conta como falha: um coletor
+ * Compara uma métrica com a sua regra. Uma métrica em falta conta como falha: um colector
  * que deixa cair uma métrica em silêncio produz um verde mentiroso, que é exactamente o
  * que a catraca existe para impedir.
  * @param {MetricRule} rule
@@ -67,7 +67,7 @@ export function evaluate(rule, measurement) {
   const raw = measurement?.value;
   const after = toNumber(raw);
   if (after === null) {
-    const value = JSON.stringify(raw) ?? String(raw);
+    const value = typeof raw === 'number' ? String(raw) : JSON.stringify(raw) ?? String(raw);
     const detail = issue('value_not_numeric_current', { value });
     return { ...emptyResult(rule), status: Status.INVALID, detail };
   }

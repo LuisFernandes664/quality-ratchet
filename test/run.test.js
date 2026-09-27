@@ -1,3 +1,4 @@
+// @ts-check
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -23,6 +24,9 @@ function memoryFs(files) {
 }
 
 const LCOV = 'SF:a.js\nLF:10\nLH:7\nend_of_record\n';
+
+/** Relatório lcov com 50% de linhas cobertas. */
+const LCOV_HALF = 'SF:a.js\nLF:10\nLH:5\nend_of_record\n';
 
 describe('parseJsonText', () => {
   test('ignora o BOM UTF-8 inicial', () => {
@@ -118,5 +122,95 @@ describe('collectMeasurements', () => {
       collectMeasurements(fs, sourced, { metricsPath: 'm.json', baselineDir: '.' }),
       (error) => error instanceof MetricsError && error.code === 'metric_defined_twice',
     );
+  });
+});
+
+describe('collectMeasurements com o baseline do ramo base', () => {
+  const lcov = { format: 'lcov', path: 'coverage/lcov.info' };
+  const fake = { format: 'json', path: 'fake.json', pointer: '/v' };
+  const base = v2({
+    cov: { value: 80, direction: 'up', source: lcov },
+    lint: { value: 3, direction: 'down' },
+  });
+  const files = { 'coverage/lcov.info': LCOV_HALF, 'fake.json': '{"v": 99}', 'm.json': '{}' };
+
+  /**
+   * Medições de um PR com o baseline indicado.
+   * @param {Record<string, Record<string, unknown>>} metrics
+   * @param {Record<string, string>} [extraFiles]
+   */
+  const collect = (metrics, extraFiles = {}) => collectMeasurements(
+    memoryFs({ ...files, ...extraFiles }),
+    v2(metrics),
+    { metricsPath: 'm.json', baselineDir: '.', base },
+  );
+
+  test('sem baseline do ramo base nao ha medicoes do ramo base', async () => {
+    const { baseMeasurements } = await collectMeasurements(memoryFs(files), base, {
+      metricsPath: 'm.json', baselineDir: '.',
+    });
+
+    assert.deepEqual(baseMeasurements, {});
+  });
+
+  test('a source que o PR trocou e medida tambem com a source do ramo base', async () => {
+    const { baseMeasurements } = await collect({
+      cov: { value: 80, direction: 'up', source: fake },
+      lint: { value: 3, direction: 'down' },
+    });
+
+    assert.deepEqual(baseMeasurements.cov, { origin: 'source', value: 50 });
+  });
+
+  test('a medicao com a source do PR continua nas medicoes normais', async () => {
+    const { measurements } = await collect({
+      cov: { value: 80, direction: 'up', source: fake },
+      lint: { value: 3, direction: 'down' },
+    });
+
+    assert.deepEqual(measurements.cov, { origin: 'source', value: 99 });
+  });
+
+  test('a source que o PR retirou e medida com a source do ramo base', async () => {
+    const { baseMeasurements } = await collect(
+      { cov: { value: 80, direction: 'up' }, lint: { value: 3, direction: 'down' } },
+      { 'm.json': '{"cov": 99}' },
+    );
+
+    assert.deepEqual(baseMeasurements.cov, { origin: 'source', value: 50 });
+  });
+
+  test('metrica retirada pelo PR com source e medida pela source do ramo base', async () => {
+    const { baseMeasurements } = await collect({ lint: { value: 3, direction: 'down' } });
+
+    assert.deepEqual(baseMeasurements.cov, { origin: 'source', value: 50 });
+  });
+
+  test('metrica a que o PR acrescentou source fica sem valor do ficheiro', async () => {
+    const { baseMeasurements } = await collect({
+      cov: { value: 80, direction: 'up', source: lcov },
+      lint: { value: 3, direction: 'down', source: fake },
+    });
+
+    assert.deepEqual(baseMeasurements.lint, { origin: 'file' });
+  });
+
+  test('source igual nao e medida outra vez', async () => {
+    const { baseMeasurements } = await collect({
+      cov: { value: 80, direction: 'up', source: lcov },
+      lint: { value: 3, direction: 'down' },
+    });
+
+    assert.deepEqual(baseMeasurements, {});
+  });
+
+  test('relatorio da source do ramo base em falta fica com o motivo', async () => {
+    const { baseMeasurements } = await collectMeasurements(
+      memoryFs({ 'fake.json': '{"v": 99}', 'm.json': '{}' }),
+      v2({ cov: { value: 80, direction: 'up', source: fake } }),
+      { metricsPath: 'm.json', baselineDir: '.', base },
+    );
+
+    assert.equal(baseMeasurements.cov.error?.code, 'report_not_found');
   });
 });

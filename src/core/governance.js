@@ -4,28 +4,39 @@
  * ficheiro do baseline só o pode apertar. Afrouxar exige autorização explícita, e o
  * perdão de hotfix é uma saída à parte, sempre visível no sumário.
  */
+import path from 'node:path';
+
 import { ConfigError } from './errors.js';
 import { EPSILON, isBetter } from './compare.js';
 
 /** @typedef {import('./types.js').Baseline} Baseline */
 /** @typedef {import('./types.js').MetricRule} MetricRule */
+/** @typedef {import('./types.js').MetricSource} MetricSource */
 /** @typedef {import('./types.js').BaselineChange} BaselineChange */
 /** @typedef {import('./types.js').ChangeKind} ChangeKind */
 /** @typedef {import('./types.js').Decision} Decision */
-/** @typedef {'loosened'|'tightened'|null} FieldVerdict */
+/** @typedef {'loosened'|'tightened'|'changed'|null} FieldVerdict */
+/** @typedef {{loosened: string[], tightened: string[], changed: string[]}} FieldsByVerdict */
 
 /** Decisão negativa, partilhada para não criar objectos repetidos. */
 const DENIED = Object.freeze({ granted: false, reason: null });
 
 /**
- * Comparadores por campo: dizem se o PR afrouxou ou apertou cada campo da regra.
+ * Comparadores por campo: dizem se o PR afrouxou, apertou ou só alterou cada campo da
+ * regra. A `source` decide o que é medido, por isso qualquer mudança nela afrouxa: sem
+ * isso, apontar a métrica para outro relatório esconderia uma regressão. `target` e
+ * `description` são informativos e só ficam registados.
  * @type {Array<[string, (before: MetricRule, after: MetricRule) => FieldVerdict]>}
  */
 const FIELD_CHECKS = [
+  ['direction', (before, after) => (before.direction === after.direction ? null : 'loosened')],
   ['value', compareValue],
   ['tolerance', compareTolerance],
   ['min', compareMin],
   ['max', compareMax],
+  ['source', (before, after) => (sourceKey(before) === sourceKey(after) ? null : 'loosened')],
+  ['target', (before, after) => informative(before.target, after.target)],
+  ['description', (before, after) => informative(before.description, after.description)],
 ];
 
 /**
@@ -48,29 +59,99 @@ export function diffBaselines(base, head) {
  * @returns {BaselineChange}
  */
 function describeChange(name, before, after) {
-  if (!before) return change(name, 'added', [], [], null, after ?? null);
-  if (!after) return change(name, 'removed', ['metric'], [], before, null);
-  if (before.direction !== after.direction) {
-    return change(name, 'loosened', ['direction'], [], before, after);
-  }
-  const verdicts = FIELD_CHECKS.map(([field, check]) => [field, check(before, after)]);
-  const loosened = verdicts.filter(([, v]) => v === 'loosened').map(([field]) => String(field));
-  const tightened = verdicts.filter(([, v]) => v === 'tightened').map(([field]) => String(field));
-  const kind = loosened.length > 0 ? 'loosened' : tightened.length > 0 ? 'tightened' : 'unchanged';
-  return change(name, kind, loosened, tightened, before, after);
+  if (!before) return change(name, 'added', groupFields([]), null, after ?? null);
+  if (!after) return change(name, 'removed', groupFields([['metric', 'loosened']]), before, null);
+  const fields = groupFields(FIELD_CHECKS.map(([field, check]) => (
+    /** @type {[string, FieldVerdict]} */ ([field, check(before, after)]))));
+  return change(name, kindOf(fields), fields, before, after);
+}
+
+/**
+ * Agrupa os campos pelo veredicto de cada um.
+ * @param {Array<[string, FieldVerdict]>} verdicts
+ * @returns {FieldsByVerdict}
+ */
+function groupFields(verdicts) {
+  const having = (/** @type {FieldVerdict} */ verdict) => verdicts
+    .filter(([, candidate]) => candidate === verdict)
+    .map(([field]) => field);
+  return {
+    loosened: having('loosened'),
+    tightened: having('tightened'),
+    changed: having('changed'),
+  };
+}
+
+/**
+ * Tipo da alteração: afrouxar pesa mais do que apertar, e apertar mais do que só alterar.
+ * @param {FieldsByVerdict} fields
+ * @returns {ChangeKind}
+ */
+function kindOf(fields) {
+  if (fields.loosened.length > 0) return 'loosened';
+  if (fields.tightened.length > 0) return 'tightened';
+  return fields.changed.length > 0 ? 'changed' : 'unchanged';
 }
 
 /**
  * @param {string} name
  * @param {ChangeKind} kind
- * @param {string[]} loosenedFields
- * @param {string[]} tightenedFields
+ * @param {FieldsByVerdict} fields
  * @param {MetricRule|null} before
  * @param {MetricRule|null} after
  * @returns {BaselineChange}
  */
-function change(name, kind, loosenedFields, tightenedFields, before, after) {
-  return { name, kind, loosenedFields, tightenedFields, before, after };
+function change(name, kind, fields, before, after) {
+  return {
+    name,
+    kind,
+    loosenedFields: fields.loosened,
+    tightenedFields: fields.tightened,
+    changedFields: fields.changed,
+    before,
+    after,
+  };
+}
+
+/**
+ * Identidade da source de uma regra, para saber se o PR mudou o que é medido. A ordem e
+ * as repetições de `levels` não contam, nem as formas equivalentes do caminho (`./a` é
+ * `a`). Tudo o resto conta, incluindo acrescentar ou retirar a source, ou escrever o
+ * `field` por omissão que antes estava implícito: na dúvida, pede-se autorização. As
+ * chaves desconhecidas ficam de fora, porque os extractors não as lêem.
+ * @param {MetricRule|undefined} rule
+ * @returns {string} '' quando a regra não existe ou não tem source
+ */
+export function sourceKey(rule) {
+  const source = rule?.source;
+  if (source === undefined) return '';
+  const levels = source.levels === undefined ? null : [...new Set(source.levels)].sort();
+  const file = path.posix.normalize(source.path);
+  const { format, field = null, pointer = null } = source;
+  return JSON.stringify([format, file, field, pointer, levels]);
+}
+
+/**
+ * Regras do ramo base cuja source o PR mudou, acrescentou ou retirou, incluindo as
+ * métricas retiradas que tinham source. Enquanto a mudança não for autorizada, estas
+ * métricas medem-se com a source do ramo base.
+ * @param {Baseline} base
+ * @param {Baseline} head
+ * @returns {MetricRule[]}
+ */
+export function movedSources(base, head) {
+  const heads = new Map(head.metrics.map((rule) => [rule.name, rule]));
+  return base.metrics.filter((rule) => sourceKey(rule) !== sourceKey(heads.get(rule.name)));
+}
+
+/**
+ * Campo informativo: qualquer diferença fica registada, sem afrouxar nem apertar.
+ * @param {unknown} before
+ * @param {unknown} after
+ * @returns {FieldVerdict}
+ */
+function informative(before, after) {
+  return before === after ? null : 'changed';
 }
 
 /**
@@ -143,7 +224,8 @@ export function loosenedChanges(changes) {
 /**
  * Contrato efectivo desta execução. Sem baseline do ramo base, ou com autorização para
  * afrouxar, vale o do PR. Caso contrário cada métrica fica com a versão mais exigente das
- * duas, e as métricas retiradas pelo PR continuam a ser verificadas.
+ * duas e com a source do ramo base, e as métricas retiradas pelo PR continuam a ser
+ * verificadas.
  * @param {Baseline|null} base
  * @param {Baseline} head
  * @param {boolean} looseningGranted
@@ -159,7 +241,9 @@ export function resolveContract(base, head, looseningGranted) {
 }
 
 /**
- * Combina duas versões da mesma regra, ficando com o mais exigente de cada campo.
+ * Combina duas versões da mesma regra, ficando com o mais exigente de cada campo. A
+ * source é a do ramo base (ou nenhuma, se lá não havia), porque mudá-la é afrouxar; só
+ * fica a do PR quando é a mesma escrita de outra forma.
  * @param {MetricRule|undefined} base
  * @param {MetricRule} head
  * @returns {MetricRule}
@@ -167,13 +251,26 @@ export function resolveContract(base, head, looseningGranted) {
 function stricterRule(base, head) {
   if (!base) return head;
   if (base.direction !== head.direction) return base;
-  return {
+  const source = sourceKey(base) === sourceKey(head) ? head.source : base.source;
+  return withSource({
     ...head,
     value: stricterValue(head.direction, base.value, head.value),
     tolerance: Math.min(base.tolerance, head.tolerance),
     ...optional('min', pickBound(base.min, head.min, Math.max)),
     ...optional('max', pickBound(base.max, head.max, Math.min)),
-  };
+  }, source);
+}
+
+/**
+ * Cópia da regra com a source indicada, ou sem source quando ela é undefined.
+ * @param {MetricRule} rule
+ * @param {MetricSource|undefined} source
+ * @returns {MetricRule}
+ */
+function withSource(rule, source) {
+  const copy = { ...rule };
+  delete copy.source;
+  return source === undefined ? copy : { ...copy, source };
 }
 
 /**

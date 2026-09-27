@@ -1,3 +1,4 @@
+// @ts-check
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -55,6 +56,18 @@ describe('tightenBaseline', () => {
     const { baseline } = tightenBaseline(v1(), current, { frozenAt: '2026-09-27' });
 
     assert.equal(baseline.frozenAt, '2026-09-27');
+  });
+
+  test('string que transborda para infinito nao aperta o baseline', () => {
+    const baseline = v2({ c: { value: 80, direction: 'up' } });
+
+    assert.deepEqual(tightenBaseline(baseline, measured({ c: '1e400' })).tightened, []);
+  });
+
+  test('string que transborda para infinito conta como metrica sem medicao', () => {
+    const baseline = v2({ c: { value: 80, direction: 'up' } });
+
+    assert.deepEqual(rebaseline(baseline, measured({ c: '1e400' })).missing, ['c']);
   });
 
   test('ignora medicoes com erro', () => {

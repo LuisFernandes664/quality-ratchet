@@ -4,13 +4,20 @@
  * também serve de input a quem lê o resultado do gate e corrige o código.
  */
 import { serializeBaseline } from './baseline.js';
-import { Status } from './compare.js';
+import { EPSILON, Status } from './compare.js';
+import { codeSpan, oneLine, tableCode } from './markdown.js';
 
 /** @typedef {import('./types.js').Report} Report */
 /** @typedef {import('./types.js').MetricResult} MetricResult */
 /** @typedef {import('./types.js').BaselineChange} BaselineChange */
 /** @typedef {import('./types.js').Issue} Issue */
 /** @typedef {import('./messages.js').Translator} Translator */
+
+/** Casas decimais dos números apresentados, quando chegam para os distinguir. */
+const DECIMALS = 4;
+
+/** Máximo de casas decimais para distinguir valores muito próximos. */
+const MAX_DECIMALS = 12;
 
 /** Ícone de cada estado na tabela. */
 const ICON = Object.freeze({
@@ -38,7 +45,7 @@ const ICON = Object.freeze({
  */
 export function renderSummary(report, t, { name = '', notes = [] } = {}) {
   const sections = [
-    `## ${t('title', { name })}`,
+    `## ${oneLine(t('title', { name }))}`,
     verdict(report, t),
     ...renderNotes(report, notes, t),
     renderTable(report.outcome.results, t),
@@ -62,7 +69,8 @@ function verdict(report, t) {
 }
 
 /**
- * Notas visíveis sobre perdões, autorizações e governação.
+ * Notas visíveis sobre perdões, autorizações e governação. Cada nota fica numa só linha,
+ * para um título ou um nome com quebras de linha não sair da citação.
  * @param {Report} report
  * @param {Issue[]} extra
  * @param {Translator} t
@@ -77,12 +85,23 @@ function renderNotes(report, extra, t) {
     const reason = reasonOf(report.authorisation.reason);
     notes.push(note('note_loosen_authorised', { reason }));
   } else if (report.loosened.length > 0) {
-    notes.push(note('note_loosen_unauthorised', { names: codeList(report.loosened) }));
+    notes.push(unauthorisedNote(report));
   }
   if (!report.passed && report.bypass.granted) {
     notes.push(note('note_bypassed', { reason: reasonOf(report.bypass.reason) }));
   }
-  return notes.map((item) => `> ${t(item.code, item.params)}`);
+  return notes.map((item) => `> ${oneLine(t(item.code, item.params))}`);
+}
+
+/**
+ * Nota de afrouxamento sem autorização. Com o padrão de título vazio não há título que
+ * autorize, por isso a nota não o sugere.
+ * @param {Report} report
+ * @returns {Issue}
+ */
+function unauthorisedNote(report) {
+  const code = report.loosenable ? 'note_loosen_unauthorised' : 'note_loosen_disabled';
+  return note(code, { names: codeList(report.loosened) });
 }
 
 /**
@@ -117,20 +136,15 @@ function renderTable(results, t) {
  * @returns {string}
  */
 function renderRow(row, withTarget, t) {
-  const missing = t('missing_value');
-  const cells = [
-    ICON[row.status],
-    `\`${row.name}\``,
-    row.before === null ? missing : formatNumber(row.before),
-    row.after === null ? missing : formatNumber(row.after),
-    formatDelta(row),
-  ];
+  const [before, after] = formatPair(row.before, row.after, t('missing_value'));
+  const cells = [ICON[row.status], tableCode(row.name), before, after, formatDelta(row)];
   if (withTarget) cells.push(row.target === undefined ? '' : formatNumber(row.target));
   return `| ${cells.join(' | ')} |`;
 }
 
 /**
- * Delta com sinal, e a tolerância quando a regressão foi tolerada.
+ * Delta com sinal, e a tolerância quando a regressão foi tolerada. Um delta ou uma
+ * tolerância que não são zero nunca aparecem como zero.
  * @param {MetricResult} row
  * @returns {string}
  */
@@ -138,9 +152,9 @@ function formatDelta(row) {
   if (row.delta === null) return '';
   if (row.delta === 0) return '0';
   const sign = row.delta > 0 ? '+' : '';
-  const delta = `${sign}${formatNumber(row.delta)}`;
+  const delta = `${sign}${formatNonZero(row.delta)}`;
   if (row.status !== Status.TOLERATED) return delta;
-  return `${delta} (±${formatNumber(row.tolerance)})`;
+  return `${delta} (±${formatNonZero(row.tolerance)})`;
 }
 
 /**
@@ -149,7 +163,69 @@ function formatDelta(row) {
  * @returns {string}
  */
 export function formatNumber(value) {
-  return String(Number(value.toFixed(4)));
+  return toDecimals(value, DECIMALS);
+}
+
+/**
+ * Formata números que aparecem lado a lado (baseline e valor medido) com as mesmas casas
+ * decimais: quatro, ou as que forem precisas para que valores que a comparação distingue
+ * não pareçam iguais (ex: 0.81234 e 0.81231, que a quatro casas seriam ambos 0.8123).
+ * @param {number[]} values
+ * @returns {string[]}
+ */
+export function formatNumbers(values) {
+  let decimals = DECIMALS;
+  while (decimals < MAX_DECIMALS && collide(values, decimals)) decimals += 1;
+  return values.map((value) => toDecimals(value, decimals));
+}
+
+/**
+ * Indica se dois valores diferentes ficam iguais quando arredondados.
+ * @param {number[]} values
+ * @param {number} decimals
+ * @returns {boolean}
+ */
+function collide(values, decimals) {
+  return values.some((a, i) => values.some((b, j) => j > i
+    && Math.abs(a - b) > EPSILON
+    && toDecimals(a, decimals) === toDecimals(b, decimals)));
+}
+
+/**
+ * @param {number} value
+ * @param {number} decimals
+ * @returns {string}
+ */
+function toDecimals(value, decimals) {
+  return String(Number(value.toFixed(decimals)));
+}
+
+/**
+ * Valor que não é zero: quando quatro casas o arredondariam para zero, mostra três
+ * algarismos significativos.
+ * @param {number} value
+ * @returns {string}
+ */
+function formatNonZero(value) {
+  const text = formatNumber(value);
+  return text === '0' && value !== 0 ? String(Number(value.toPrecision(3))) : text;
+}
+
+/**
+ * Baseline e valor medido formatados em conjunto; os que faltam ficam com `missing`.
+ * @param {number|null} before
+ * @param {number|null} after
+ * @param {string} missing
+ * @returns {[string, string]}
+ */
+function formatPair(before, after, missing) {
+  if (before !== null && after !== null) {
+    const [shownBefore, shownAfter] = formatNumbers([before, after]);
+    return [shownBefore, shownAfter];
+  }
+  const show = (/** @type {number|null} */ value) => (
+    value === null ? missing : formatNumber(value));
+  return [show(before), show(after)];
 }
 
 /**
@@ -159,9 +235,9 @@ export function formatNumber(value) {
  * @returns {string}
  */
 function renderDetails(report, t) {
-  const lines = report.outcome.results
-    .filter((row) => row.detail)
-    .map((row) => `- \`${row.name}\`: ${t(row.detail?.code ?? '', row.detail?.params)}`);
+  const lines = report.outcome.results.flatMap((row) => (row.detail
+    ? [`- ${codeSpan(row.name)}: ${oneLine(t(row.detail.code, row.detail.params))}`]
+    : []));
   if (report.outcome.unlocked.length > 0) {
     lines.push(`- ${t('unlocked_hint', { names: codeList(report.outcome.unlocked) })}`);
   }
@@ -177,8 +253,8 @@ function renderDetails(report, t) {
 function renderChanges(changes, t) {
   if (changes.length === 0) return '';
   const rows = changes.map((item) => {
-    const fields = [...item.loosenedFields, ...item.tightenedFields].join(', ');
-    return `| \`${item.name}\` | ${t(`change_${item.kind}`)} | ${fields} |`;
+    const fields = [...item.loosenedFields, ...item.tightenedFields, ...item.changedFields];
+    return `| ${tableCode(item.name)} | ${t(`change_${item.kind}`)} | ${fields.join(', ')} |`;
   });
   const header = `| ${t('col_metric')} | ${t('col_change')} | ${t('col_fields')} |`;
   return [`### ${t('section_changes')}`, '', header, '|---|---|---|', ...rows].join('\n');
@@ -191,9 +267,9 @@ function renderChanges(changes, t) {
  * @returns {string}
  */
 function renderWarnings(report, t) {
-  const lines = report.warnings.map((item) => `- ${t(item.code, item.params)}`);
+  const lines = report.warnings.map((item) => `- ${oneLine(t(item.code, item.params))}`);
   if (report.untracked.length > 0) {
-    const names = report.untracked.map((name) => `\`${name}\``).join(', ');
+    const names = report.untracked.map((name) => codeSpan(name)).join(', ');
     lines.push(`- ${t('warning_untracked', { names })}`);
   }
   if (lines.length === 0) return '';
@@ -228,7 +304,7 @@ function renderNewBaseline(report, t) {
  * @returns {string}
  */
 function codeList(items) {
-  return items.map((item) => `\`${item.name}\``).join(', ');
+  return items.map((item) => codeSpan(item.name)).join(', ');
 }
 
 /**
@@ -244,24 +320,44 @@ function codeList(items) {
  * @returns {LogEntry[]}
  */
 export function reportLogEntries(report, t) {
-  /** @type {LogEntry[]} */
-  const entries = report.outcome.failures.map((row) => ({
-    level: 'error',
-    text: failureText(row, t),
-  }));
-  for (const row of report.outcome.unlocked) {
-    entries.push({ level: 'error', text: t('log_unlocked', numbers(row)) });
-  }
-  if (report.loosened.length > 0 && !report.authorisation.granted) {
-    const names = codeList(report.loosened);
-    entries.push({ level: 'error', text: t('note_loosen_unauthorised', { names }) });
-  }
-  if (report.tightened.length > 0) {
-    const names = report.tightened.join(', ');
-    entries.push({ level: 'notice', text: t('log_tightened', { names }) });
-  }
-  entries.push(closingEntry(report, t));
-  return entries;
+  return [
+    ...report.outcome.failures.map((row) => errorEntry(failureText(row, t))),
+    ...report.outcome.unlocked.map((row) => errorEntry(t('log_unlocked', numbers(row)))),
+    ...loosenedEntries(report, t),
+    ...tightenedEntries(report, t),
+    closingEntry(report, t),
+  ];
+}
+
+/**
+ * @param {string} text
+ * @returns {LogEntry}
+ */
+function errorEntry(text) {
+  return { level: 'error', text };
+}
+
+/**
+ * Erro de afrouxamento sem autorização, quando o há.
+ * @param {Report} report
+ * @param {Translator} t
+ * @returns {LogEntry[]}
+ */
+function loosenedEntries(report, t) {
+  if (report.loosened.length === 0 || report.authorisation.granted) return [];
+  const { code, params } = unauthorisedNote(report);
+  return [errorEntry(t(code, params))];
+}
+
+/**
+ * Aviso informativo das melhorias por fixar, quando as há.
+ * @param {Report} report
+ * @param {Translator} t
+ * @returns {LogEntry[]}
+ */
+function tightenedEntries(report, t) {
+  if (report.tightened.length === 0) return [];
+  return [{ level: 'notice', text: t('log_tightened', { names: report.tightened.join(', ') }) }];
 }
 
 /**
@@ -280,8 +376,8 @@ function failureText(row, t) {
  * @returns {{name: string, before: string, after: string}}
  */
 function numbers(row) {
-  const show = (/** @type {number|null} */ value) => (value === null ? '?' : formatNumber(value));
-  return { name: row.name, before: show(row.before), after: show(row.after) };
+  const [before, after] = formatPair(row.before, row.after, '?');
+  return { name: row.name, before, after };
 }
 
 /**
