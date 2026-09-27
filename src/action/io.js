@@ -45,6 +45,19 @@ export function readInput(env, name, fallback = '') {
 }
 
 /**
+ * Lê um input que se pode desligar com um valor vazio explícito. O fallback só se aplica
+ * quando a variável não existe; `bypass-label: ''` devolve '' e desliga a funcionalidade.
+ * @param {Env} env
+ * @param {string} name nome do input tal como no action.yml
+ * @param {string} fallback valor quando o input não foi definido
+ * @returns {string}
+ */
+export function readOptionalInput(env, name, fallback) {
+  const value = env[inputKey(name)];
+  return value === undefined ? fallback : value.trim();
+}
+
+/**
  * Lê um input booleano: 'true' ou 'false' sem distinguir maiúsculas. Vazio devolve o
  * fallback; qualquer outro valor lança ConfigError('config_boolean_invalid').
  * @param {Env} env

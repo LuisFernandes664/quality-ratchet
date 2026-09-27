@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { ConfigError } from '../../src/core/errors.js';
-import { createActionIO, readBooleanInput, readInput } from '../../src/action/io.js';
+import {
+  createActionIO,
+  readBooleanInput,
+  readInput,
+  readOptionalInput,
+} from '../../src/action/io.js';
 
 /**
  * Dependências falsas: regista escritas em ficheiro e linhas no stdout; randomId devolve os
@@ -27,6 +32,20 @@ function fakeDeps(env, ids = ['abc']) {
   };
   return { io: createActionIO(deps), files, lines };
 }
+
+describe('readOptionalInput', () => {
+  test('devolve o fallback quando a variável não existe', () => {
+    assert.equal(readOptionalInput({}, 'bypass-label', 'hotfix'), 'hotfix');
+  });
+
+  test('valor vazio explícito devolve vazio e desliga a funcionalidade', () => {
+    assert.equal(readOptionalInput({ 'INPUT_BYPASS-LABEL': '' }, 'bypass-label', 'hotfix'), '');
+  });
+
+  test('remove os espaços à volta do valor', () => {
+    assert.equal(readOptionalInput({ 'INPUT_BYPASS-LABEL': ' x ' }, 'bypass-label', 'h'), 'x');
+  });
+});
 
 describe('readInput', () => {
   test('lê a variável INPUT_ com o nome em maiúsculas', () => {

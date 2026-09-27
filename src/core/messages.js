@@ -130,6 +130,7 @@ const EN = {
   cli_option_invalid: (p) => `invalid options: ${p.reason}`,
   init_metric_absent: (p) => `metric "${p.name}" is not in the metrics file`,
   init_no_metrics: () => 'no metrics selected; use --up and/or --down',
+  init_metric_conflict: (p) => `metric "${p.name}" cannot be in both --up and --down`,
   git_show_failed: (p) => `could not read ${p.path} at ${p.ref}: ${p.reason}`,
   file_unreadable: (p) => `could not read ${p.path}: ${p.reason}`,
   json_invalid: (p) => `${p.path} is not valid JSON: ${p.reason}`,
@@ -158,7 +159,12 @@ const EN = {
     + 'is still in the job summary. Pull requests from forks get a read-only token.',
   log_pr_refresh_failed: (p) => `Could not refresh the pull request title and labels `
     + `(${p.reason}); using the event payload.`,
-  log_tightened: (p) => `Improvements to lock in: ${p.names}. See the new-baseline output.`,
+  log_tightened: (p) => `Improvements to lock in: ${p.names}. The updated baseline is in the `
+    + 'summary.',
+  log_event_unreadable: (p) => `Could not read the event payload (${p.reason}); continuing `
+    + 'without pull request context, so there is no governance or comment in this run.',
+  log_pagination_truncated: (p) => `Stopped reading ${p.path} after ${p.pages} pages (safety `
+    + 'limit); later pages were ignored.',
   log_baseline_written: (p) => `Updated baseline written to ${p.path}.`,
   cli_written: (p) => `Wrote ${p.path}.`,
   cli_nothing_to_update: () => 'Nothing to tighten: the baseline already matches the '
@@ -269,6 +275,7 @@ const PT = {
   cli_option_invalid: (p) => `opções inválidas: ${p.reason}`,
   init_metric_absent: (p) => `a métrica "${p.name}" não está no ficheiro de métricas`,
   init_no_metrics: () => 'nenhuma métrica seleccionada; usa --up e/ou --down',
+  init_metric_conflict: (p) => `a métrica "${p.name}" não pode estar em --up e em --down`,
   git_show_failed: (p) => `não foi possível ler ${p.path} em ${p.ref}: ${p.reason}`,
   file_unreadable: (p) => `não foi possível ler ${p.path}: ${p.reason}`,
   json_invalid: (p) => `${p.path} não é JSON válido: ${p.reason}`,
@@ -300,7 +307,12 @@ const PT = {
     + 'de leitura.',
   log_pr_refresh_failed: (p) => 'Não foi possível actualizar o título e as labels do pull '
     + `request (${p.reason}); a usar o payload do evento.`,
-  log_tightened: (p) => `Melhorias por fixar: ${p.names}. Ver o output new-baseline.`,
+  log_tightened: (p) => `Melhorias por fixar: ${p.names}. O baseline actualizado está no `
+    + 'sumário.',
+  log_event_unreadable: (p) => `Não foi possível ler o payload do evento (${p.reason}); a `
+    + 'execução segue sem contexto de pull request, por isso sem governação nem comentário.',
+  log_pagination_truncated: (p) => `A leitura de ${p.path} parou ao fim de ${p.pages} páginas `
+    + '(limite de segurança); as páginas seguintes foram ignoradas.',
   log_baseline_written: (p) => `Baseline actualizado escrito em ${p.path}.`,
   cli_written: (p) => `Escrito ${p.path}.`,
   cli_nothing_to_update: () => 'Nada a apertar: o baseline já corresponde às medições.',
