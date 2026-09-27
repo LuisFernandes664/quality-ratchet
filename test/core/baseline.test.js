@@ -462,6 +462,21 @@ describe('migrateToV2', () => {
     });
   });
 
+  test('mantem a ordem dos valores do ficheiro v1', () => {
+    const raw = {
+      metrics: { coverage: 7, lint: 3, dup: 2 },
+      rules: { monotonic_down: ['lint', 'dup'], monotonic_up: ['coverage'] },
+    };
+
+    const { baseline } = migrateToV2(parseBaseline(raw));
+
+    assert.deepEqual(Object.keys(serializeBaseline(baseline).metrics ?? {}), [
+      'coverage',
+      'lint',
+      'dup',
+    ]);
+  });
+
   test('devolve os valores sem regra que nao podem ser migrados', () => {
     const raw = { ...V1_RAW, metrics: { ...V1_RAW.metrics, extra: 3 } };
 

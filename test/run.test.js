@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 import { BaselineError, MetricsError } from '../src/core/errors.js';
+import { runRatchet } from '../src/core/ratchet.js';
 import { collectMeasurements, loadBaseline, parseJsonText } from '../src/run.js';
 import { v2 } from './helpers.js';
 
@@ -27,6 +28,30 @@ const LCOV = 'SF:a.js\nLF:10\nLH:7\nend_of_record\n';
 
 /** Relatório lcov com 50% de linhas cobertas. */
 const LCOV_HALF = 'SF:a.js\nLF:10\nLH:5\nend_of_record\n';
+
+/** Relatório JUnit do Vitest: um teste falhado com três `expect.soft`, um `<failure>` cada. */
+const JUNIT_ONE_FAILED = '<testsuites><testsuite name="a" tests="2" failures="1">'
+  + '<testcase name="soft"><failure message="1"/><failure message="2"/>'
+  + '<failure message="3"/></testcase><testcase name="ok"/></testsuite></testsuites>';
+
+/** Relatório JUnit com dois testes falhados, cada um com um só `<failure>`. */
+const JUNIT_TWO_FAILED = '<testsuites><testsuite name="a" tests="2" failures="2">'
+  + '<testcase name="soft"><failure message="1"/></testcase>'
+  + '<testcase name="ok"><failure message="1"/></testcase></testsuite></testsuites>';
+
+/**
+ * Relatório de uma métrica com source, lido por collectMeasurements e avaliado pela catraca.
+ * @param {Record<string, unknown>} rule regra da métrica, sem a source
+ * @param {{format: string, path: string, field?: string}} source
+ * @param {string} report conteúdo do relatório
+ * @returns {Promise<import('../src/core/types.js').Report>}
+ */
+async function ratchetFromReport(rule, source, report) {
+  const head = v2({ m: { ...rule, source } });
+  const fs = memoryFs({ [source.path]: report });
+  const { measurements } = await collectMeasurements(fs, head, { baselineDir: '.' });
+  return runRatchet({ head, base: null, measurements });
+}
 
 describe('parseJsonText', () => {
   test('ignora o BOM UTF-8 inicial', () => {
@@ -113,6 +138,22 @@ describe('collectMeasurements', () => {
     const { measurements } = await collectMeasurements(fs, sourced, { baselineDir: '.' });
 
     assert.equal(measurements.cov.error?.code, 'extractor_report_unparseable');
+  });
+
+  test('caminho da source com * nao e expandido: relatorio nao encontrado', async () => {
+    const junit = { format: 'junit', path: 'target/TEST-*.xml' };
+    const fs = memoryFs({ 'target/TEST-a.xml': JUNIT_TWO_FAILED });
+
+    const { measurements } = await collectMeasurements(
+      fs,
+      v2({ tests: { value: 1, direction: 'up', source: junit } }),
+      { baselineDir: '.' },
+    );
+
+    assert.deepEqual(measurements.tests.error, {
+      code: 'report_not_found',
+      params: { path: 'target/TEST-*.xml' },
+    });
   });
 
   test('metrica que vem do ficheiro e da source e erro', async () => {
@@ -212,5 +253,39 @@ describe('collectMeasurements com o baseline do ramo base', () => {
     );
 
     assert.equal(baseMeasurements.cov.error?.code, 'report_not_found');
+  });
+});
+
+describe('collectMeasurements e runRatchet de ponta a ponta', () => {
+  const junit = { format: 'junit', path: 'report.xml', field: 'failures' };
+
+  test('junit: de um teste falhado para dois e regressao', async () => {
+    const base = await ratchetFromReport({ value: 0, direction: 'down' }, junit, JUNIT_ONE_FAILED);
+    const value = base.outcome.results[0].after;
+
+    const report = await ratchetFromReport({ value, direction: 'down' }, junit, JUNIT_TWO_FAILED);
+
+    const row = report.outcome.results[0];
+    assert.deepEqual([row.status, row.before, row.after], ['regressed', 1, 2]);
+  });
+
+  test('cobertura: 20002 de 20003 linhas com line-rate 1 fica abaixo do minimo 100', async () => {
+    const xml = '<?xml version="1.0" ?><coverage version="7.6" line-rate="1" '
+      + 'lines-covered="20002" lines-valid="20003" branch-rate="0"></coverage>';
+    const cobertura = { format: 'cobertura', path: 'coverage.xml' };
+
+    const report = await ratchetFromReport({ value: 100, direction: 'up', min: 100 }, cobertura,
+      xml);
+
+    assert.equal(report.outcome.results[0].detail?.code, 'below_min');
+  });
+
+  test('pip-audit: projecto sem dependencias passa com max 0', async () => {
+    const pipAudit = { format: 'pip-audit', path: 'pip-audit.json' };
+
+    const report = await ratchetFromReport({ value: 0, direction: 'down', max: 0 }, pipAudit,
+      '{"dependencies":[],"fixes":[]}');
+
+    assert.equal(report.passed, true);
   });
 });

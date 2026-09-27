@@ -31,9 +31,19 @@ const ICON = Object.freeze({
 });
 
 /**
+ * Dica que acompanha, por omissão, o afrouxamento sem autorização: um checkout do último
+ * commit do PR, em vez do merge commit, mostra um baseline antigo que parece afrouxado sem
+ * o PR o mudar. Quem compara com outra revisão (a CLI com `--base-ref`) passa a sua.
+ * @type {Issue}
+ */
+const CHECKOUT_HINT = Object.freeze({ code: 'note_checkout_hint', params: Object.freeze({}) });
+
+/**
  * @typedef {object} SummaryOptions
  * @property {string} [name] nome desta catraca, quando há várias no mesmo repositório
  * @property {Issue[]} [notes] notas extra do chamador (ex: baseline do ramo base em falta)
+ * @property {Issue} [hint] dica que acompanha o afrouxamento sem autorização (por omissão,
+ *   a do checkout do merge commit)
  */
 
 /**
@@ -43,11 +53,11 @@ const ICON = Object.freeze({
  * @param {SummaryOptions} [options]
  * @returns {string}
  */
-export function renderSummary(report, t, { name = '', notes = [] } = {}) {
+export function renderSummary(report, t, { name = '', notes = [], hint = CHECKOUT_HINT } = {}) {
   const sections = [
     `## ${oneLine(t('title', { name }))}`,
     verdict(report, t),
-    ...renderNotes(report, notes, t),
+    ...renderNotes(report, notes, hint, t),
     renderTable(report.outcome.results, t),
     renderDetails(report, t),
     renderChanges(report.changes, t),
@@ -73,10 +83,11 @@ function verdict(report, t) {
  * para um título ou um nome com quebras de linha não sair da citação.
  * @param {Report} report
  * @param {Issue[]} extra
+ * @param {Issue} hint dica que acompanha o afrouxamento sem autorização
  * @param {Translator} t
  * @returns {string[]}
  */
-function renderNotes(report, extra, t) {
+function renderNotes(report, extra, hint, t) {
   /** @type {Issue[]} */
   const notes = [...extra];
   const reasonOf = (/** @type {Issue|null} */ reason) => (
@@ -85,7 +96,7 @@ function renderNotes(report, extra, t) {
     const reason = reasonOf(report.authorisation.reason);
     notes.push(note('note_loosen_authorised', { reason }));
   } else if (report.loosened.length > 0) {
-    notes.push(unauthorisedNote(report));
+    notes.push(unauthorisedNote(report), hint);
   }
   if (!report.passed && report.bypass.granted) {
     notes.push(note('note_bypassed', { reason: reasonOf(report.bypass.reason) }));
@@ -317,13 +328,15 @@ function codeList(items) {
  * Mensagens de log para o runner ou para a consola, uma por problema.
  * @param {Report} report
  * @param {Translator} t
+ * @param {Issue} [hint] dica que acompanha o afrouxamento sem autorização (por omissão, a
+ *   do checkout do merge commit)
  * @returns {LogEntry[]}
  */
-export function reportLogEntries(report, t) {
+export function reportLogEntries(report, t, hint = CHECKOUT_HINT) {
   return [
     ...report.outcome.failures.map((row) => errorEntry(failureText(row, t))),
     ...report.outcome.unlocked.map((row) => errorEntry(t('log_unlocked', numbers(row)))),
-    ...loosenedEntries(report, t),
+    ...loosenedEntries(report, t, hint),
     ...tightenedEntries(report, t),
     closingEntry(report, t),
   ];
@@ -338,15 +351,16 @@ function errorEntry(text) {
 }
 
 /**
- * Erro de afrouxamento sem autorização, quando o há.
+ * Erro de afrouxamento sem autorização, quando o há, seguido da dica.
  * @param {Report} report
  * @param {Translator} t
+ * @param {Issue} hint
  * @returns {LogEntry[]}
  */
-function loosenedEntries(report, t) {
+function loosenedEntries(report, t, hint) {
   if (report.loosened.length === 0 || report.authorisation.granted) return [];
   const { code, params } = unauthorisedNote(report);
-  return [errorEntry(t(code, params))];
+  return [errorEntry(`${t(code, params)} ${t(hint.code, hint.params)}`)];
 }
 
 /**

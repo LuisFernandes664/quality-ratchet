@@ -536,9 +536,24 @@ function serializeRule(rule) {
  */
 export function migrateToV2(baseline) {
   return {
-    baseline: { ...baseline, version: 2, untracked: {} },
+    baseline: { ...baseline, version: 2, untracked: {}, metrics: inFileOrder(baseline) },
     dropped: Object.keys(baseline.untracked),
   };
+}
+
+/**
+ * Métricas pela ordem em que os valores aparecem no ficheiro v1, para a migração não
+ * baralhar o diff (a leitura v1 agrupa-as por direcção).
+ * @param {Baseline} baseline
+ * @returns {MetricRule[]}
+ */
+function inFileOrder(baseline) {
+  const order = baseline.valueOrder ?? [];
+  const rank = (/** @type {string} */ name) => {
+    const index = order.indexOf(name);
+    return index === -1 ? order.length : index;
+  };
+  return [...baseline.metrics].sort((a, b) => rank(a.name) - rank(b.name));
 }
 
 /**

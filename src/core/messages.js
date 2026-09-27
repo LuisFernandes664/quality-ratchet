@@ -74,6 +74,12 @@ const EN = {
     + 'or revert the change.',
   note_loosen_disabled: (p) => `This pull request loosens the baseline (${p.names}), but `
     + 'loosening is turned off: the lower-baseline pattern is empty. Revert the change.',
+  note_checkout_hint: () => 'If this pull request does not edit the baseline, check that the '
+    + 'workflow checks out the merge commit (the default of actions/checkout on pull_request) '
+    + 'and not the head commit, or update the branch.',
+  note_base_ref_hint: () => 'If this pull request does not edit the baseline, check that '
+    + '`--base-ref` is the merge base with the target branch (`git merge-base`) and not the '
+    + 'tip of that branch, or update the branch.',
   note_base_missing: (p) => `There is no baseline at \`${p.path}\` on the base branch, so `
     + 'baseline changes are not governed in this run.',
   note_no_token: () => 'No token available, so the base branch baseline was not read and '
@@ -285,6 +291,12 @@ const PT = {
   note_loosen_disabled: (p) => `Este pull request afrouxa o baseline (${p.names}), mas `
     + 'afrouxar está desligado: o padrão de descida de baseline está vazio. Reverte a '
     + 'alteração.',
+  note_checkout_hint: () => 'Se este pull request não altera o baseline, confirma que o '
+    + 'workflow faz checkout do merge commit (o comportamento por omissão do actions/checkout '
+    + 'em pull_request) e não do último commit do pull request, ou actualiza o ramo.',
+  note_base_ref_hint: () => 'Se este pull request não altera o baseline, confirma que o '
+    + '`--base-ref` é a merge base com o ramo de destino (`git merge-base`) e não a ponta '
+    + 'desse ramo, ou actualiza o ramo.',
   note_base_missing: (p) => `Não existe baseline em \`${p.path}\` no ramo base, por isso `
     + 'as alterações ao baseline não são governadas nesta execução.',
   note_no_token: () => 'Sem token, o baseline do ramo base não foi lido e as alterações ao '

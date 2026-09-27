@@ -81,6 +81,9 @@ const cellCount = (line) => line.split(/(?<!\\)\|/).length;
 /** Relatório vermelho em português com o lint a regredir. */
 const redSummary = () => renderSummary(reportFor({ ...CLEAN, lint_violations_total: 500 }), pt);
 
+/** Dica da CLI, que compara com a revisão de `--base-ref` em vez de um checkout. */
+const BASE_REF_HINT = { code: 'note_base_ref_hint', params: {} };
+
 /** Relatório com o baseline da cobertura baixado no PR sem autorização. */
 const loosenedReport = (options = OPTIONS) => runRatchet({
   head: v1({ coverage_line_pct: 5 }),
@@ -193,6 +196,54 @@ describe('renderSummary', () => {
     const options = { ...OPTIONS, lowerBaselinePattern: '' };
 
     assert.match(renderSummary(loosenedReport(options), pt), /afrouxar está desligado/);
+  });
+
+  test('a nota de afrouxamento nao autorizado e seguida da dica sobre o checkout', () => {
+    const markdown = renderSummary(loosenedReport(), en);
+
+    assert.match(markdown, /revert the change\.\n\n> If this pull request does not edit the /);
+  });
+
+  test('a dica sobre o checkout indica o merge commit do actions/checkout', () => {
+    assert.match(renderSummary(loosenedReport(), en), /checks out the merge commit \(the default/);
+  });
+
+  test('com o padrao vazio a nota tambem e seguida da dica sobre o checkout', () => {
+    const options = { ...OPTIONS, lowerBaselinePattern: '' };
+
+    assert.match(renderSummary(loosenedReport(options), en), /Revert the change\.\n\n> If this/);
+  });
+
+  test('em portugues a dica sobre o checkout tambem aparece', () => {
+    assert.match(renderSummary(loosenedReport(), pt), /> Se este pull request não altera o /);
+  });
+
+  test('afrouxamento autorizado nao leva a dica sobre o checkout', () => {
+    const report = runRatchet({
+      head: v1({ coverage_line_pct: 5 }),
+      base: v1(),
+      measurements: measured({ ...CLEAN, coverage_line_pct: 5 }),
+      context: { title: 'chore: lower baseline of coverage' },
+      options: OPTIONS,
+    });
+
+    assert.doesNotMatch(renderSummary(report, en), /merge commit/);
+  });
+
+  test('sem afrouxamento nao ha dica sobre o checkout', () => {
+    assert.doesNotMatch(renderSummary(reportFor(CLEAN), en), /merge commit/);
+  });
+
+  test('a dica passada nas opcoes substitui a do checkout', () => {
+    const markdown = renderSummary(loosenedReport(), en, { hint: BASE_REF_HINT });
+
+    assert.match(markdown, /revert the change\.\n\n> If this .* `--base-ref` is the merge base/);
+  });
+
+  test('com a dica passada nas opcoes a do checkout nao aparece', () => {
+    const markdown = renderSummary(loosenedReport(), en, { hint: BASE_REF_HINT });
+
+    assert.doesNotMatch(markdown, /actions\/checkout/);
   });
 
   test('a tabela de alteracoes mostra o campo source', () => {
@@ -427,6 +478,20 @@ describe('reportLogEntries', () => {
     const texts = reportLogEntries(report, en).map((entry) => entry.text);
 
     assert.ok(texts.some((text) => text.includes('loosening is turned off')));
+  });
+
+  test('o erro de afrouxamento termina com a dica sobre o checkout', () => {
+    const texts = reportLogEntries(loosenedReport(), en).map((entry) => entry.text);
+    const loosened = texts.find((text) => text.startsWith('This pull request loosens'));
+
+    assert.match(loosened ?? '', /revert the change\. If this pull request does not edit the /);
+  });
+
+  test('o erro de afrouxamento termina com a dica passada pelo chamador', () => {
+    const texts = reportLogEntries(loosenedReport(), en, BASE_REF_HINT).map((e) => e.text);
+    const loosened = texts.find((text) => text.startsWith('This pull request loosens'));
+
+    assert.match(loosened ?? '', /revert the change\. If this .* `--base-ref` is the merge base/);
   });
 
   test('ordem: falhas, melhorias por fixar, afrouxamento, apertos e fecho', () => {
