@@ -6,6 +6,11 @@
  * o Vitest escreve um `<failure>` por cada erro do teste (ex: vários `expect.soft`) e o
  * jest-junit um por mensagem (ex: o teste e o `afterEach` falham), mas é um só teste falhado.
  * Um teste com `<failure>` e `<error>` conta nos dois campos.
+ *
+ * Mede um só ficheiro. O Maven Surefire e o Gradle escrevem um `TEST-*.xml` por classe de
+ * testes e o `dotnet test --logger junit` um ficheiro por projecto: um `path` que aponte para
+ * um deles mede só essa classe ou esse projecto. Por isso, juntam-se antes num único ficheiro,
+ * dentro de um `<testsuites>` (receita no README, "One report per class or project").
  */
 
 import {

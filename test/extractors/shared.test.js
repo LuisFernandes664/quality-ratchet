@@ -393,7 +393,7 @@ describe('motivos dos extractors', () => {
       assert.throws(() => extract(source, text), (error) => (
         error instanceof ExtractorError
         && typeof error.params.reason === 'object'
-        && error.params.reason.code === code
+        && /** @type {{code: string}} */ (error.params.reason).code === code
         && REASON_CODES.includes(code)));
     });
   }

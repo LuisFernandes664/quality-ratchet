@@ -57,6 +57,21 @@ const SUREFIRE = [
   '',
 ].join('\n');
 
+/** Outra classe do Maven Surefire, no seu próprio `TEST-*.xml`. 2 testes, 1 falha. */
+const SUREFIRE_PARSER = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  [
+    '<testsuite name="com.example.ParserTest" time="0.011" tests="2" errors="0" skipped="0"',
+    ' failures="1">',
+  ].join(''),
+  '  <testcase name="reads" classname="com.example.ParserTest" time="0.003"/>',
+  '  <testcase name="rejects" classname="com.example.ParserTest" time="0.008">',
+  '    <failure message="expected exception" type="org.opentest4j.AssertionFailedError"/>',
+  '  </testcase>',
+  '</testsuite>',
+  '',
+].join('\n');
+
 /** Relatório do jest-junit: `<testsuites>` com dois `<testsuite>`. 5 testes, 1 falha. */
 const JEST = [
   '<?xml version="1.0" encoding="UTF-8"?>',
@@ -180,6 +195,19 @@ function vitestReport(failuresPerTest) {
 }
 
 /**
+ * Junta relatórios como a receita do README ("One report per class or project"): tira as
+ * linhas da declaração XML de cada um e envolve-os num `<testsuites>` sem declaração.
+ * @param {string[]} reports
+ * @returns {string}
+ */
+function mergeReports(reports) {
+  const bodies = reports.map((report) => report.split('\n')
+    .filter((line) => !line.startsWith('<?xml'))
+    .join('\n'));
+  return ['<testsuites>', ...bodies, '</testsuites>'].join('\n');
+}
+
+/**
  * @param {string} text
  * @param {string} [field]
  * @returns {number}
@@ -296,6 +324,12 @@ describe('junit', () => {
   test('não confunde <flakyFailure> e <rerunFailure> com <failure>', () => {
     const text = SUREFIRE.replace(/<failure [\s\S]*?<\/failure>/, '');
     assert.equal(run(text, 'failures'), 0);
+  });
+
+  test('<testsuites> a envolver dois relatórios do Surefire soma as duas classes', () => {
+    const text = mergeReports([SUREFIRE, SUREFIRE_PARSER]);
+    const fields = ['tests', 'failures', 'errors', 'skipped'];
+    assert.deepEqual(fields.map((field) => run(text, field)), [7, 2, 1, 1]);
   });
 
   test('relatório sem <testcase> dá extractor_report_empty', () => {

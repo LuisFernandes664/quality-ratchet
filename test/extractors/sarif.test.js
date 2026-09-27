@@ -375,7 +375,8 @@ describe('sarif', () => {
       executionSuccessful: false,
       toolExecutionNotifications: [{ level: 'warning', message: { text: 'lento' } }],
     }])]);
-    assert.throws(() => count(text), (error) => error.params.reason.params.details === '');
+    assert.throws(() => count(text), (/** @type {any} */ error) => (
+      error.params.reason.params.details === ''));
   });
 
   test('junta as notificações de erro de configuração e de execução, sem repetidos', () => {
@@ -385,7 +386,7 @@ describe('sarif', () => {
       toolConfigurationNotifications: [notification, { message: { text: 'aviso' } }],
       toolExecutionNotifications: [notification, { level: 'error', message: { text: 'abortou' } }],
     }])]);
-    assert.throws(() => count(text), (error) => (
+    assert.throws(() => count(text), (/** @type {any} */ error) => (
       error.params.reason.params.details === 'sem memória; abortou'));
   });
 
@@ -393,7 +394,8 @@ describe('sarif', () => {
     const text = log([invoked([{ executionSuccessful: true }]), invoked([{
       executionSuccessful: false,
     }])]);
-    assert.throws(() => count(text), (error) => error.params.reason.params.run === 'runs[1]');
+    assert.throws(() => count(text), (/** @type {any} */ error) => (
+      error.params.reason.params.run === 'runs[1]'));
   });
 
   test('execução com sucesso e notificações de erro (Semgrep) conta os resultados', () => {
@@ -420,7 +422,7 @@ describe('sarif', () => {
 
   test('SARIF 2.0.0 dá extractor_report_unparseable', () => {
     const text = JSON.stringify({ version: '2.0.0', runs: [run('x', [])] });
-    assert.throws(() => count(text), (error) => (
+    assert.throws(() => count(text), (/** @type {any} */ error) => (
       error.params.reason.code === 'reason_sarif_version'));
   });
 

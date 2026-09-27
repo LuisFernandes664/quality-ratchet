@@ -74,6 +74,15 @@ const NO_BRANCHES = [
   'end_of_record',
 ].join('\n');
 
+/** Funções de `src/prog.c` (linhas FN) e os nomes pela mesma ordem. */
+const PROG_FUNCTIONS = ['FN:10,15,main', 'FN:2,6,f', 'FN:7,9,g'];
+const PROG_FUNCTION_NAMES = ['main', 'f', 'g'];
+/** Linha e bloco de cada ramo de `src/prog.c`, pela ordem das linhas BRDA. */
+const PROG_BRANCH_LINES = [3, 3, 8, 8, 8, 8, 12, 12];
+const PROG_BRANCH_BLOCKS = [0, 1, 0, 1, 2, 3, 0, 1];
+/** Linhas instrumentadas de `src/prog.c`, pela ordem das linhas DA. */
+const PROG_LINE_NUMBERS = [2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14];
+
 /**
  * Registo de `src/prog.c` capturado pelo lcov 2.0 (`gcc --coverage`) com o nome de teste
  * indicado: FN, FNDA, BRDA, DA e resumos.
@@ -82,25 +91,18 @@ const NO_BRANCHES = [
  * @returns {string[]}
  */
 function progRecord(testName, counts) {
-  const branchLines = [3, 3, 8, 8, 8, 8, 12, 12];
-  const blocks = [0, 1, 0, 1, 2, 3, 0, 1];
-  const lineNumbers = [2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14];
+  const { functions, branches, lines, summary } = counts;
   return [
     `TN:${testName}`,
     'SF:src/prog.c',
-    'FN:10,15,main',
-    'FN:2,6,f',
-    'FN:7,9,g',
-    ...['main', 'f', 'g'].map((name, index) => `FNDA:${counts.functions[index]},${name}`),
-    counts.summary[0],
-    counts.summary[1],
-    ...counts.branches.map((taken, index) => (
-      `BRDA:${branchLines[index]},0,${blocks[index]},${taken}`)),
-    counts.summary[2],
-    counts.summary[3],
-    ...counts.lines.map((count, index) => `DA:${lineNumbers[index]},${count}`),
-    counts.summary[4],
-    counts.summary[5],
+    ...PROG_FUNCTIONS,
+    ...functions.map((hits, index) => `FNDA:${hits},${PROG_FUNCTION_NAMES[index]}`),
+    ...summary.slice(0, 2),
+    ...branches.map((taken, index) => (
+      `BRDA:${PROG_BRANCH_LINES[index]},0,${PROG_BRANCH_BLOCKS[index]},${taken}`)),
+    ...summary.slice(2, 4),
+    ...lines.map((count, index) => `DA:${PROG_LINE_NUMBERS[index]},${count}`),
+    ...summary.slice(4),
     'end_of_record',
   ];
 }
@@ -269,7 +271,8 @@ describe('lcov', () => {
   });
 
   test('linha BRDA sem o número de vezes dá extractor_report_unparseable', () => {
-    assert.throws(() => run(REPORT.replace('BRDA:6,0,1,0', 'BRDA:6,0,1')), (error) => (
+    const text = REPORT.replace('BRDA:6,0,1,0', 'BRDA:6,0,1');
+    assert.throws(() => run(text), (/** @type {any} */ error) => (
       error.params.reason.code === 'reason_lcov_invalid_value'
       && error.params.reason.params.key === 'BRDA'));
   });

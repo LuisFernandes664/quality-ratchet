@@ -169,14 +169,14 @@ describe('cobertura', () => {
 
   test('lines-covered negativo dá extractor_report_unparseable', () => {
     const text = withRoot('lines-valid="10" lines-covered="-1" line-rate="0"');
-    assert.throws(() => run(text), (error) => (
+    assert.throws(() => run(text), (/** @type {any} */ error) => (
       error.code === 'extractor_report_unparseable'
       && error.params.reason.code === 'reason_attribute_not_count'));
   });
 
   test('lines-valid que não é número dá extractor_report_unparseable', () => {
     const text = withRoot('lines-valid="muitas" lines-covered="3" line-rate="0.3"');
-    assert.throws(() => run(text), (error) => (
+    assert.throws(() => run(text), (/** @type {any} */ error) => (
       error.params.reason.code === 'reason_attribute_not_count'
       && error.params.reason.params.name === 'lines-valid'));
   });

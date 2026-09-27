@@ -185,7 +185,7 @@ describe('npm-audit', () => {
   });
 
   test('registry sem serviço de auditoria dá o 404 do message de topo', () => {
-    assert.throws(() => run(ENDPOINT_404), (error) => (
+    assert.throws(() => run(ENDPOINT_404), (/** @type {any} */ error) => (
       String(error.params.reason.params.details).startsWith('404 Not Found - POST')));
   });
 
@@ -194,14 +194,14 @@ describe('npm-audit', () => {
       message: 'request to https://ci:s3cret@npm.example/-/npm/v1/security/audits/quick failed',
       error: { summary: '', detail: '' },
     });
-    assert.throws(() => run(text), (error) => (
+    assert.throws(() => run(text), (/** @type {any} */ error) => (
       error.params.reason.params.details
         === 'request to https://***@npm.example/-/npm/v1/security/audits/quick failed'));
   });
 
   test('sem summary nem message usa o detail do erro', () => {
     const text = '{"error":{"summary":"","detail":"Try again later"}}';
-    assert.throws(() => run(text), (error) => (
+    assert.throws(() => run(text), (/** @type {any} */ error) => (
       error.params.reason.params.details === 'Try again later'));
   });
 
