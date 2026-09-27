@@ -30,6 +30,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
+          cache: npm
+      # Development dependencies only: the style tests parse the code with typescript.
+      - run: npm ci
       - run: node --test
 
   typecheck:
@@ -143,12 +146,13 @@ jobs:
         with:
           node-version: 24
 
-      - name: Coverage of src/ as LCOV
+      - name: Coverage of src/ as LCOV and test results as JUnit
         run: |
           mkdir -p coverage
           node --test --experimental-test-coverage \
             --test-reporter=spec --test-reporter-destination=stdout \
             --test-reporter=lcov --test-reporter-destination=coverage/lcov.info \
+            --test-reporter=junit --test-reporter-destination=coverage/junit.xml \
             --test-coverage-include='src/**'
 
       - name: The ratchet guards its own quality

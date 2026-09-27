@@ -16,8 +16,9 @@ import process from 'node:process';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { COMMAND_OPTIONS } from '../src/cli/args.js';
 import { SCHEMA_URL } from '../src/cli/defaults.js';
-import { extract } from '../src/extractors/index.js';
+import { EXTRACTORS, extract, listFormats } from '../src/extractors/index.js';
 
 /** Raiz do repositório. */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,6 +64,24 @@ const SCHEMA_MAJOR = /quality-ratchet\/(?:raw\/)?v(\d+)\/schema\//g;
 
 /** Célula de uma tabela Markdown que o README usa para os nomes (ex: `| \`baseline\` |`). */
 const TABLE_NAME = /^\| `([^`]+)` \| ([^|]*) \|/;
+
+/** Célula com nomes entre acentos graves separados por vírgulas (ex: `a`, `b`). */
+const CODE_NAMES = /`([^`]+)`/g;
+
+/**
+ * Bloco `concurrency` de um workflow com um grupo por pull request: o número do pull
+ * request no `group`.
+ */
+const PULL_REQUEST_GROUP = /^concurrency:\n {2}group: .*github\.event\.pull_request\.number/m;
+
+/** `cancel-in-progress` do bloco `concurrency`, com um valor que não é `false`. */
+const CANCEL_IN_PROGRESS = /^concurrency:\n(?: {2}.*\n)*? {2}cancel-in-progress: (?!false\b)\S/m;
+
+/** Workflows que correm em pull_request, pela secção `on:`. */
+const ON_PULL_REQUEST = /^\s+pull_request:\s*$/m;
+
+/** Workflow de CI, relativo à raiz. */
+const CI_WORKFLOW = '.github/workflows/ci.yml';
 
 /** Bloco de código Markdown: linguagem e conteúdo. */
 const CODE_BLOCK = /^```(\w*)\n([\s\S]*?)^```$/gm;
@@ -147,7 +166,7 @@ const MAJOR = VERSION.split('.')[0];
  * @returns {boolean}
  */
 function hasCommand(command) {
-  return spawnSync(command, ['--version'], { env: CHILD_ENV }).status === 0;
+  return spawnSync(command, ['--version'], { env: { ...CHILD_ENV } }).status === 0;
 }
 
 /** Testes que correm scripts com o bash: saltados só quando o bash não existe. */
@@ -403,7 +422,7 @@ async function makeTempDir() {
  * @returns {string} stdout sem espaços nas pontas
  */
 function git(cwd, args) {
-  const options = { cwd, env: CHILD_ENV, encoding: /** @type {const} */ ('utf8') };
+  const options = { cwd, env: { ...CHILD_ENV }, encoding: /** @type {const} */ ('utf8') };
   return execFileSync('git', [...GIT_CONFIG, ...args], { ...options, stdio: 'pipe' }).trim();
 }
 
@@ -499,6 +518,47 @@ async function measureReadmeJunitMerge(field) {
 }
 
 /**
+ * Nomes entre acentos graves de uma célula de tabela.
+ * @param {string} cell
+ * @returns {string[]}
+ */
+function codeNames(cell) {
+  return [...cell.matchAll(CODE_NAMES)].map((match) => match[1]);
+}
+
+/**
+ * Linhas da tabela de sources do README, sem o cabeçalho: formato -> campos.
+ * @returns {Promise<Array<[string, string[]]>>}
+ */
+async function sourceRows() {
+  const rows = tableRows(readmeSection(await readText('README.md'), SOURCES));
+  return [...rows]
+    .map(([format, cell]) => /** @type {[string, string[]]} */ ([format, codeNames(cell)]))
+    .filter(([, fields]) => fields.length > 0);
+}
+
+/**
+ * Workflows do repositório e dos exemplos que correm em pull_request.
+ * @returns {Promise<Array<[string, string]>>}
+ */
+async function pullRequestWorkflows() {
+  return (await workflowFiles()).filter(([, text]) => ON_PULL_REQUEST.test(text));
+}
+
+/**
+ * Passos de um job de um workflow (as linhas do job), pelo nome do job.
+ * @param {string} workflow
+ * @param {string} job
+ * @returns {string[]}
+ */
+function jobLines(workflow, job) {
+  const lines = workflow.split('\n');
+  const start = lines.indexOf(`  ${job}:`);
+  assert.notEqual(start, -1, `job "${job}" em falta`);
+  return indentedBlock(lines, start, 2).map((line) => line.trim());
+}
+
+/**
  * Tipos de evento de release em que o workflow de release corre.
  * @returns {Promise<string[]>}
  */
@@ -569,6 +629,39 @@ describe('README e action.yml', () => {
 
     assert.ok(found.length > 0);
     assert.deepEqual(found.filter(({ value }) => value !== MAJOR), []);
+  });
+});
+
+describe('README, extractors e CLI', () => {
+  test('a tabela de sources do README tem exactamente os formatos dos extractors', async () => {
+    const formats = (await sourceRows()).map(([format]) => format);
+
+    assert.deepEqual(formats.sort(), listFormats().sort());
+  });
+
+  test('a tabela de sources do README tem os campos de cada formato, pela ordem', async () => {
+    const rows = await sourceRows();
+    const expected = rows.map(([format]) => [format, EXTRACTORS[format]?.fields]);
+
+    assert.deepEqual(rows, expected);
+  });
+
+  test('o README tem uma subseccao para cada comando da CLI', async () => {
+    const section = readmeSection(await readText('README.md'), 'Command line');
+    const missing = Object.keys(COMMAND_OPTIONS)
+      .filter((command) => !new RegExp(`^### \`${command}\``, 'm').test(section));
+
+    assert.deepEqual(missing, []);
+  });
+
+  test('o README documenta cada opcao de cada comando da CLI', async () => {
+    const section = readmeSection(await readText('README.md'), 'Command line');
+    const missing = Object.entries(COMMAND_OPTIONS).flatMap(([command, options]) => Object
+      .keys(options)
+      .filter((name) => !section.includes(`\`--${name}`))
+      .map((name) => `${command} --${name}`));
+
+    assert.deepEqual(missing, []);
   });
 });
 
@@ -796,6 +889,35 @@ describe('workflows', () => {
 
     assert.deepEqual(missing.map(([file]) => file), []);
   });
+
+  test('os workflows de pull request agrupam as execucoes pelo numero do pull request',
+    async () => {
+      const missing = (await pullRequestWorkflows())
+        .filter(([, text]) => !PULL_REQUEST_GROUP.test(text));
+
+      assert.deepEqual(missing.map(([file]) => file), []);
+    });
+
+  test('os workflows de pull request cancelam a execucao em curso', async () => {
+    const missing = (await pullRequestWorkflows())
+      .filter(([, text]) => !CANCEL_IN_PROGRESS.test(text));
+
+    assert.deepEqual(missing.map(([file]) => file), []);
+  });
+
+  test('o workflow do quick start do README agrupa e cancela por pull request', async () => {
+    const quickStart = codeBlock(await readText('README.md'), 'yaml', 'name: Quality ratchet');
+
+    assert.ok(PULL_REQUEST_GROUP.test(quickStart) && CANCEL_IN_PROGRESS.test(quickStart));
+  });
+
+  test('o job de testes do CI instala as devDependencies antes de correr os testes',
+    async () => {
+      const steps = jobLines(await readText(CI_WORKFLOW), 'test');
+      const install = steps.indexOf('- run: npm ci');
+
+      assert.ok(install !== -1 && install < steps.indexOf('- run: node --test'), steps.join('\n'));
+    });
 
   test('os workflows de pull request fazem checkout do merge commit', async () => {
     const headRef = /^\s*ref:\s*\$\{\{\s*github\.(event\.pull_request\.head\.sha|head_ref)\s*\}\}/m;

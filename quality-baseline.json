@@ -1,0 +1,50 @@
+{
+  "$schema": "./schema/baseline.v2.schema.json",
+  "version": 2,
+  "frozen_at": "2026-09-27",
+  "metrics": {
+    "coverage_lines_pct": {
+      "value": 99.7,
+      "direction": "up",
+      "tolerance": 0.3,
+      "source": {
+        "format": "lcov",
+        "path": "coverage/lcov.info",
+        "field": "lines"
+      },
+      "description": "Line coverage of src/ measured by node --test."
+    },
+    "coverage_branches_pct": {
+      "value": 96.8,
+      "direction": "up",
+      "tolerance": 1,
+      "source": {
+        "format": "lcov",
+        "path": "coverage/lcov.info",
+        "field": "branches"
+      },
+      "description": "Branch coverage of src/; V8 counts vary slightly between Node versions."
+    },
+    "coverage_functions_pct": {
+      "value": 78.8,
+      "direction": "up",
+      "tolerance": 1.5,
+      "source": {
+        "format": "lcov",
+        "path": "coverage/lcov.info",
+        "field": "functions"
+      },
+      "description": "Function coverage of src/, including inline callbacks."
+    },
+    "tests_total": {
+      "value": 1319,
+      "direction": "up",
+      "source": {
+        "format": "junit",
+        "path": "coverage/junit.xml",
+        "field": "tests"
+      },
+      "description": "Deleting tests needs an authorised pull request."
+    }
+  }
+}
