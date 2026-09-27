@@ -40,4 +40,4 @@ jobs:
           # reports/mutation/mutation.json
           npx stryker run --reporters json,clear-text
 
-      - uses: LuisFernandes664/quality-ratchet@v1
+      - uses: LuisFernandes664/quality-ratchet@v2

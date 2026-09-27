@@ -1,11 +1,22 @@
 # Quality ratchet on GitLab merge requests, through the command line interface.
 #
-# - --base-ref reads the baseline of the target branch with git, so the governance
-#   rules (loosening needs an authorising title) apply as they do on GitHub.
+# - --base-ref is the commit where the merge request left the target branch (the merge
+#   base), and its baseline is the contract: loosening it needs an authorising title. The
+#   tip of the target branch would be wrong here: a merge request pipeline checks out the
+#   source branch, so a branch that is behind would be blamed for every tightening made on
+#   the target since, reported as "loosens the baseline" and as regressions.
+# - git merge-base needs the history, hence GIT_DEPTH: "0" (no shallow clone).
+# - This pipeline measures the source branch alone, not the result of the merge. For the
+#   same gate as a GitHub pull request, enable merged results pipelines (then HEAD is the
+#   merge and the merge base is the target commit it contains) or require fast-forward
+#   merges, so that every merge request is rebased onto the target first.
 # - --title and --labels come from the merge request. The --option=value form accepts a
 #   title that starts with "-" (--title "-x" is rejected). GitLab does not start a new
 #   pipeline when only the title or the labels change: run the pipeline again after
 #   adding the hotfix label or renaming the merge request.
+# - #v2 runs the latest 2.x.y release, the same code as `uses: ...@v2` on GitHub. Pin
+#   #<full commit sha> instead for supply chain safety. Without a ref, npm would install
+#   the tip of the default branch, released or not.
 # - The summary is printed as Markdown and kept as an artifact.
 # - The reports are the ones examples/baselines/node.json reads (see node.yml for why
 #   eslint and npm audit exit codes are relaxed). Report paths in the baseline are
@@ -13,6 +24,8 @@
 quality-ratchet:
   image: node:24
   stage: test
+  variables:
+    GIT_DEPTH: "0"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
@@ -24,10 +37,11 @@ quality-ratchet:
     - npm audit --json > reports/npm-audit.json || true
     - npx stryker run --reporters json,clear-text
     - TARGET="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
-    - git fetch --depth=1 origin "+refs/heads/$TARGET:refs/remotes/origin/$TARGET"
+    - git fetch origin "+refs/heads/$TARGET:refs/remotes/origin/$TARGET"
+    - BASE="$(git merge-base "origin/$TARGET" HEAD)"
     - >-
-      npx --yes github:LuisFernandes664/quality-ratchet check
-      --base-ref "origin/$TARGET"
+      npx --yes github:LuisFernandes664/quality-ratchet#v2 check
+      --base-ref "$BASE"
       --title="$CI_MERGE_REQUEST_TITLE"
       --labels="$CI_MERGE_REQUEST_LABELS"
       > quality-ratchet.md

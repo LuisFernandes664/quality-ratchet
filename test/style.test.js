@@ -1,7 +1,12 @@
-import { describe, test } from 'node:test';
+// @ts-check
+/**
+ * Regras de estilo que valem para todo o repositório: sem travessão tipográfico, linhas de
+ * código com no máximo 100 caracteres, e todo o JavaScript verificado pelo typecheck.
+ */
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 /** Raiz do repositório. */
@@ -12,6 +17,12 @@ const SKIPPED = new Set(['node_modules', '.git', 'coverage']);
 
 /** Extensões sujeitas ao limite de comprimento de linha. */
 const CODE = new Set(['.js', '.mjs', '.json', '.yml', '.yaml']);
+
+/** Pastas de JavaScript que o typecheck tem de cobrir, relativas à raiz. */
+const TYPECHECKED_DIRS = ['src', 'bin', 'test'];
+
+/** Directiva que liga a verificação de tipos num ficheiro JavaScript. */
+const TS_CHECK = '// @ts-check';
 
 /** Travessão tipográfico, proibido em todo o repositório (usar hífen simples). */
 const EM_DASH = String.fromCharCode(0x2014);
@@ -45,6 +56,17 @@ async function textFiles() {
   return files.map((file, index) => [path.relative(ROOT, file), texts[index]]);
 }
 
+/**
+ * Indica se um ficheiro JavaScript liga a verificação de tipos: `// @ts-check` na
+ * primeira linha, ou na segunda quando a primeira é um shebang.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function declaresTsCheck(text) {
+  const [first, second] = text.split('\n');
+  return first === TS_CHECK || (first.startsWith('#!') && second === TS_CHECK);
+}
+
 describe('estilo do repositorio', () => {
   test('nenhum ficheiro usa o travessao tipografico', async () => {
     const offenders = (await textFiles())
@@ -62,5 +84,23 @@ describe('estilo do repositorio', () => {
         .filter((item) => item.length > MAX_LINE));
 
     assert.deepEqual(offenders, []);
+  });
+});
+
+describe('typecheck', () => {
+  test('todos os ficheiros .js de src, bin e test declaram // @ts-check', async () => {
+    const offenders = (await textFiles())
+      .filter(([file]) => TYPECHECKED_DIRS.includes(file.split(path.sep)[0]))
+      .filter(([file, text]) => file.endsWith('.js') && !declaresTsCheck(text))
+      .map(([file]) => file);
+
+    assert.deepEqual(offenders, []);
+  });
+
+  test('o tsconfig verifica src, bin e test', async () => {
+    const { include } = JSON.parse(await readFile(path.join(ROOT, 'tsconfig.json'), 'utf8'));
+    const expected = TYPECHECKED_DIRS.map((dir) => `${dir}/**/*.js`);
+
+    assert.deepEqual(expected.filter((pattern) => !include.includes(pattern)), []);
   });
 });

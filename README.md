@@ -25,7 +25,7 @@ says which way it may move and, optionally, which report it is read from:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/LuisFernandes664/quality-ratchet/v1/schema/baseline.v2.schema.json",
+  "$schema": "https://raw.githubusercontent.com/LuisFernandes664/quality-ratchet/v2/schema/baseline.v2.schema.json",
   "version": 2,
   "metrics": {
     "coverage_lines": {
@@ -50,7 +50,7 @@ tool fill in every `null` with the measured value (and set `frozen_at`):
 mkdir -p reports
 npx jest --coverage --coverageReporters=lcov
 npx eslint . -f json -o reports/eslint.json
-npx github:LuisFernandes664/quality-ratchet update
+npx github:LuisFernandes664/quality-ratchet#v2 update
 ```
 
 Commit the baseline. It is the contract, and its history is the audit trail of every
@@ -73,6 +73,7 @@ jobs:
   ratchet:
     runs-on: ubuntu-latest
     steps:
+      # Keep the default ref, the merge commit: see Governance.
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
@@ -86,7 +87,7 @@ jobs:
           # ESLint exits with 1 when it finds problems: the ratchet decides, not ESLint.
           npx eslint . -f json -o reports/eslint.json || [ $? -eq 1 ]
 
-      - uses: LuisFernandes664/quality-ratchet@v1
+      - uses: LuisFernandes664/quality-ratchet@v2
 ```
 
 **Why those event types.** `opened`, `synchronize` and `reopened` are the defaults.
@@ -160,7 +161,7 @@ label: a failure forgiven on the pull request fails again there.
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/LuisFernandes664/quality-ratchet/v1/schema/baseline.v2.schema.json",
+  "$schema": "https://raw.githubusercontent.com/LuisFernandes664/quality-ratchet/v2/schema/baseline.v2.schema.json",
   "version": 2,
   "frozen_at": "2026-09-27",
   "metrics": {
@@ -246,14 +247,15 @@ The original format still works, and files are rewritten in the format they were
 ```
 
 Version 1 has no tolerance, limits or sources, and its values always come from the flat
-metrics file. Convert it with `npx github:LuisFernandes664/quality-ratchet migrate`.
+metrics file. Convert it with `npx github:LuisFernandes664/quality-ratchet#v2 migrate`.
 Values without a rule (never checked) cannot be migrated: they are dropped with a warning.
 
 ## Sources: reading reports directly
 
 A `source` points a metric at a report file. `path` is relative to the folder that holds
-the baseline file, not to the working directory. `field` picks the number; when omitted,
-the default (listed first) is used. Percentages are between 0 and 100 and are not rounded.
+the baseline file, not to the working directory, and names one file: globs and folders
+are not expanded. `field` picks the number; when omitted, the default (listed first) is
+used. Percentages are between 0 and 100 and are not rounded.
 
 | `format` | Fields (default first) | What is read | Produced by, for example |
 |---|---|---|---|
@@ -266,7 +268,7 @@ the default (listed first) is used. Percentages are between 0 and 100 and are no
 | `jscpd` | `percentage`, `clones`, `duplicated_lines` | `statistics.total` | `jscpd --reporters json` |
 | `npm-audit` | `total`, `critical`, `high`, `moderate`, `low`, `info`, `high+`, `moderate+`, `low+` | `metadata.vulnerabilities`. `high+` is high plus critical, and so on | `npm audit --json` (npm 6 and later) |
 | `pip-audit` | `count` | vulnerabilities of all dependencies | `pip-audit -f json` |
-| `junit` | `tests`, `failures`, `errors`, `skipped` | number of `<testcase>`, `<failure>`, `<error>` and `<skipped>` elements | pytest `--junitxml`, Maven Surefire, Gradle, jest-junit |
+| `junit` | `tests`, `failures`, `errors`, `skipped` | number of `<testcase>`, `<failure>`, `<error>` and `<skipped>` elements | pytest `--junitxml`, jest-junit; Maven Surefire and Gradle once merged ([below](#one-report-per-class-or-project)) |
 | `json` | `value` | the value at `pointer` (JSON Pointer, RFC 6901, required): a number, a numeric string, or an array (its length) | any tool with JSON output |
 
 Two formats take options:
@@ -291,6 +293,28 @@ A report that cannot be read or has nothing to measure makes its metric fail, wi
 reason in the summary; the other metrics are still compared, so one run shows every
 problem.
 
+### One report per class or project
+
+Some tools split their report. Maven Surefire writes `target/surefire-reports/TEST-*.xml`
+and Gradle writes `build/test-results/test/TEST-*.xml`, one file per test class, and
+`dotnet test --logger junit` writes one file per test project. A `path` that names one of
+them measures only that class or project, so merge them into one file first. For JUnit,
+wrapping the files in a single `<testsuites>` element is enough:
+
+```sh
+# Maven: target/surefire-reports. Gradle: build/test-results/test.
+mkdir -p reports
+{
+  echo '<testsuites>'
+  for f in target/surefire-reports/TEST-*.xml; do sed '/^<?xml/d' "$f"; done
+  echo '</testsuites>'
+} > reports/junit.xml
+```
+
+Then point the metric at `reports/junit.xml`. Coverage split per project works the same
+way: the [.NET example](examples/workflows/dotnet.yml) merges coverlet's files with
+ReportGenerator.
+
 ## Governance: who may loosen the baseline
 
 Editing the baseline in the same pull request that regresses a metric would defeat the
@@ -313,6 +337,15 @@ the pull request's base commit:
 - **The hotfix label forgives.** A pull request with the `bypass-label` (default
   `hotfix-bypass-ratchet`, compared case-insensitively) passes whatever failed. The
   output `passed` stays `false` and `bypassed` becomes `true`.
+
+The baseline the pull request proposes is the file in the workspace, so keep the default
+checkout of the `pull_request` event: the merge commit `refs/pull/<n>/merge`, which
+already contains the base branch. If the workflow checks out
+`github.event.pull_request.head.sha` (or `github.head_ref`), a branch that is behind shows
+an old baseline. A value that the base branch tightened since (with a lock-in pull
+request, for example) then looks loosened, and the run fails although the pull request
+never touched the file. If you need that checkout, update the branch (merge or rebase)
+before the ratchet runs.
 
 Nothing is silent. The comment states when a failure was forgiven and why, when the
 baseline was loosened with authorisation, and lists every change the pull request makes
@@ -359,7 +392,7 @@ to use it:
   baseline.
 - **`strict: true`** fails the pull request when an improvement beyond the tolerance is
   not in the committed baseline. The author runs
-  `npx github:LuisFernandes664/quality-ratchet update` and commits the result. The
+  `npx github:LuisFernandes664/quality-ratchet#v2 update` and commits the result. The
   baseline then tightens on every pull request, at the cost of one extra step.
 
 ## Tolerance and absolute limits
@@ -389,7 +422,7 @@ summary ("Quality ratchet - api"), so the ratchets never overwrite each other:
         package: [api, web]
     steps:
       # ... collect the reports of packages/${{ matrix.package }}
-      - uses: LuisFernandes664/quality-ratchet@v1
+      - uses: LuisFernandes664/quality-ratchet@v2
         with:
           name: ${{ matrix.package }}
           baseline: packages/${{ matrix.package }}/quality-baseline.json
@@ -416,6 +449,7 @@ collect step runs the fork's code (its tests), and it would run with write acces
 | `metrics` | `metrics-current.json` | Flat JSON file with this run's measurements, relative to the workspace. Optional when every metric has a source. |
 | `token` | `${{ github.token }}` | Reads the base branch baseline, refreshes the title and labels, and posts the comment. An empty token skips every API call: no governance and no comment. |
 | `comment` | `true` | Post or update the summary comment on the pull request. |
+| `comment-author` | (empty) | Login of the account that posts the comment (for example `my-app[bot]`). Only its comments are updated. Empty uses the token's login, or any bot account when the token has none (`GITHUB_TOKEN`, GitHub Apps). |
 | `name` | (empty) | Name of this ratchet when a repository runs several. |
 | `bypass-label` | `hotfix-bypass-ratchet` | Label that forgives a failure, for production hotfixes. |
 | `lower-baseline-pattern` | `^chore(\([^)]*\))?: lower baseline` | Case-insensitive regular expression that the title must match to loosen the baseline. |
@@ -425,8 +459,9 @@ collect step runs the fork's code (its tests), and it would run with write acces
 
 Boolean inputs accept only `true` or `false` (in any letter case); anything else fails the
 run with a clear message, as do an invalid baseline and an unsupported language. Setting
-`bypass-label` or `lower-baseline-pattern` to an empty string turns that escape hatch off;
-the other inputs fall back to their default when empty.
+`bypass-label` or `lower-baseline-pattern` to an empty string turns that escape hatch off,
+and an empty `token` skips every API call (no governance, no comment); the other inputs
+fall back to their default when empty.
 
 ## Outputs
 
@@ -450,12 +485,12 @@ For repositories that only need "set up, collect, ratchet", a reusable workflow 
 in one job. It takes `baseline`, `metrics`, `collect` (a bash script that produces the
 reports), `node-version`, `python-version`, `dotnet-version` (each toolchain is set up
 only when its version is given), `name`, `strict` and `language`, and exposes the
-`passed` and `new-baseline` outputs:
+`passed` and `new-baseline` outputs, with the same meaning as the action's:
 
 ```yaml
 jobs:
   ratchet:
-    uses: LuisFernandes664/quality-ratchet/.github/workflows/quality-ratchet.yml@v1
+    uses: LuisFernandes664/quality-ratchet/.github/workflows/quality-ratchet.yml@v2
     permissions:
       contents: read
       pull-requests: write
@@ -470,15 +505,45 @@ jobs:
 The caller must grant `contents: read` and `pull-requests: write`: a called workflow
 cannot have more permissions than its caller.
 
+**Secrets.** The `collect` script sees no secret by itself: `secrets: inherit` does not
+reach it, and the caller cannot write `${{ secrets.X }}` into `collect`, because `with:`
+has no access to secrets. Two optional secrets fill that gap:
+
+- `collect-env`: `NAME=VALUE` lines exported to the `collect` script only, such as a
+  private package index or a registry token read by your `.npmrc`. Each value is masked in
+  the log, and a line that is not `NAME=VALUE` fails the step without being printed.
+- `github-token`: the token the ratchet step uses instead of `github.token`, for example
+  a GitHub App token.
+
+```yaml
+    secrets:
+      collect-env: |
+        PIP_INDEX_URL=https://ci:${{ secrets.PYPI_TOKEN }}@pypi.example.com/simple
+        NODE_AUTH_TOKEN=${{ secrets.NPM_TOKEN }}
+```
+
+On pull requests from forks, GitHub passes no secrets, so both arrive empty.
+
+**Pinning.** The workflow runs the action as `LuisFernandes664/quality-ratchet@v2`, and
+`actions/checkout` and the `actions/setup-*` actions by their major tag. Pinning the
+reusable workflow to a commit SHA pins only the workflow file, not the gate code: any 2.x
+commit of the workflow runs the latest 2.x action. For a gate pinned end to end, call the
+action directly from your own job and pin it, and the setup actions, by commit SHA, as
+described in [Versions](#versions).
+
 ## Command line
 
 The same engine runs outside GitHub Actions, with Node.js 20 or later:
 
 ```sh
-npx github:LuisFernandes664/quality-ratchet check
+npx github:LuisFernandes664/quality-ratchet#v2 check
 ```
 
-Once the package is published to npm, `npx quality-ratchet check` does the same. Every
+`#v2` runs the same release as `uses: ...@v2`. Without a ref, npm installs the tip of the
+default branch, whatever has been merged since the last release. In CI, pin the full
+commit SHA instead, as described in [Versions](#versions).
+
+Once the package is published to npm, `npx quality-ratchet@2 check` does the same. Every
 command accepts `--language en|pt`, `-h`/`--help` and `-v`/`--version`. Paths are
 relative to the current directory, and the defaults are the action's.
 
@@ -489,18 +554,24 @@ JSON with `--format json`) and the log lines on stderr, prefixed with `error: `,
 `warning: ` or `notice: `.
 
 ```sh
-# the same gate as the action, governed by the baseline on origin/main
-npx github:LuisFernandes664/quality-ratchet check \
-  --base-ref origin/main \
+# governed by the baseline where this branch left origin/main
+npx github:LuisFernandes664/quality-ratchet#v2 check \
+  --base-ref "$(git merge-base origin/main HEAD)" \
   --title="$PR_TITLE" \
   --labels="$PR_LABELS"
 ```
+
+The contract is the baseline at `--base-ref`, and the baseline the branch proposes is the
+file in the working directory. Use the merge base, not the tip of the target branch: a
+branch that is behind would otherwise be blamed for every tightening made on the target
+since, reported as loosening and as regressions. The tip is right only when the working
+directory already contains it (a merge with the target, or a rebased branch).
 
 | Option | Description |
 |---|---|
 | `--baseline <path>` | Baseline file (default `quality-baseline.json`). |
 | `--metrics <path>` | Flat metrics file (default `metrics-current.json`). |
-| `--base-ref <ref>` | Git ref whose baseline is the contract. Enables governance. |
+| `--base-ref <ref>` | Git ref whose baseline is the contract. Enables governance. Use the merge base (`git merge-base <target> HEAD`) unless the working directory contains the target. |
 | `--title <text>` | Pull request title, matched against the lower-baseline pattern. |
 | `--labels <a,b>` | Pull request labels, comma separated. |
 | `--bypass-label <label>` | Label that forgives a failure (default `hotfix-bypass-ratchet`). `--bypass-label=` turns the bypass off. |
@@ -520,7 +591,7 @@ an ambiguous option and the command exits with code 2.
 Tightens the baseline file with the measured improvements, and fills in `null` values:
 
 ```sh
-npx github:LuisFernandes664/quality-ratchet update
+npx github:LuisFernandes664/quality-ratchet#v2 update
 ```
 
 `--allow-lower` re-freezes every value, regressions included, for a pull request that is
@@ -532,7 +603,7 @@ baseline itself). When nothing changes, the file is left untouched.
 Creates a v2 baseline from a flat metrics file you already produce:
 
 ```sh
-npx github:LuisFernandes664/quality-ratchet init \
+npx github:LuisFernandes664/quality-ratchet#v2 init \
   --metrics metrics-current.json \
   --up coverage_line_pct,mutation_score \
   --down lint_violations_total,duplication_pct
@@ -547,7 +618,7 @@ and limits by hand afterwards.
 Converts a v1 baseline to v2, in place or to `--output <path>`:
 
 ```sh
-npx github:LuisFernandes664/quality-ratchet migrate --baseline quality-baseline.json
+npx github:LuisFernandes664/quality-ratchet#v2 migrate --baseline quality-baseline.json
 ```
 
 **Exit codes:** 0 passed (or nothing to do), 1 the ratchet failed, 2 usage or
@@ -557,25 +628,40 @@ configuration error.
 
 ### GitLab CI
 
-Run the command line tool in a merge request pipeline. `--base-ref` reads the target
-branch's baseline with git, so governance works as on GitHub:
+Run the command line tool in a merge request pipeline. `--base-ref` reads the baseline
+of another commit with git, and that baseline is the contract:
 
 ```yaml
 quality-ratchet:
   image: node:24
+  variables:
+    GIT_DEPTH: "0"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
     - npm ci
     - npx jest --coverage --coverageReporters=lcov
     - TARGET="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
-    - git fetch --depth=1 origin "+refs/heads/$TARGET:refs/remotes/origin/$TARGET"
+    - git fetch origin "+refs/heads/$TARGET:refs/remotes/origin/$TARGET"
+    - BASE="$(git merge-base "origin/$TARGET" HEAD)"
     - >-
-      npx --yes github:LuisFernandes664/quality-ratchet check
-      --base-ref "origin/$TARGET"
+      npx --yes github:LuisFernandes664/quality-ratchet#v2 check
+      --base-ref "$BASE"
       --title="$CI_MERGE_REQUEST_TITLE"
       --labels="$CI_MERGE_REQUEST_LABELS"
 ```
+
+The contract is the baseline where the merge request left the target branch: the merge
+base, which needs the history (hence `GIT_DEPTH: "0"`). It is not the tip of the target
+branch, because a merge request pipeline checks out the source branch rather than a merge
+as GitHub does: a branch that is behind would be blamed for every tightening made on the
+target since, reported as loosening and as regressions.
+
+The trade-off is that such a pipeline measures the source branch alone: a merge request
+can pass against the older baseline, and the target branch then fails after the merge. For
+the same gate as a GitHub pull request, enable merged results pipelines (`HEAD` is then
+the merge, and its merge base with the target is the target commit it contains), or
+require fast-forward merges so that every merge request is rebased onto the target first.
 
 GitLab does not start a new pipeline when only the title or the labels change: run the
 pipeline again after renaming the merge request or adding the hotfix label. The full
@@ -586,26 +672,53 @@ example, which also keeps the summary as an artifact, is
 
 The action is written to work there too: it calls the API at `GITHUB_API_URL`, which
 those runners point to their own server, authenticates with `token <token>`, and accepts
-the base64 responses of their contents API. The runner must support `node24` actions.
+the base64 responses of their contents API.
+
+The runner must accept `runs.using: node24`, but it does not pick the Node.js version
+from it: the action runs with the `node` of the job's container image, so that image
+needs Node.js 20 or later. Older runner configurations map their default labels to
+`node:16-bullseye`, where the action fails. Map the label in `runs-on` to an image with
+Node.js 20 or later (for example `node:24-bookworm`).
+
 Depending on the instance, `uses:` may need the full URL
-(`https://github.com/LuisFernandes664/quality-ratchet@v1`). This setup is not tested in
+(`https://github.com/LuisFernandes664/quality-ratchet@v2`). This setup is not tested in
 this repository's CI; reports of what works and what does not are welcome.
 
 ## Versions
 
-`@v1` always points to the latest `1.x.y` release: the release workflow moves the major
-tag when a release is published. Breaking changes only ship in a new major. See the
-[changelog](CHANGELOG.md).
+`@v2` always points to the latest `2.x.y` release: the release workflow moves the major
+tag when a stable release is published or a pre-release is promoted to a release, and
+only when that release is the highest `2.x.y`. A pre-release never moves it, and neither
+does a patch for an older minor (such as 2.0.1 published after 2.1.0). Breaking changes
+only ship in a new major. See the [changelog](CHANGELOG.md).
 
 For supply chain safety, pin the full commit SHA instead of the tag, and let Dependabot or
 Renovate propose updates:
 
 ```yaml
-- uses: LuisFernandes664/quality-ratchet@<full commit sha> # v1.0.0
+- uses: LuisFernandes664/quality-ratchet@<full commit sha> # v2.0.0
+```
+
+The command line tool is pinned the same way, with `#` in place of `@`:
+
+```sh
+npx --yes github:LuisFernandes664/quality-ratchet#<full commit sha> check
 ```
 
 With no dependencies and no build step, the code you review at that commit is exactly
-the code that runs.
+the code that runs. That holds for the action and the command line tool, not for the
+reusable workflow, which runs the action by its major tag (see
+[Reusable workflow](#reusable-workflow)).
+
+### Upgrading from v1
+
+`@v1` stays on 1.0.0, the first version: a `node20` action with messages in Portuguese
+that only reads version 1 baselines, so it fails on a version 2 baseline. To upgrade,
+change `@v1` to `@v2`. Version 1 baselines keep working, and `migrate` converts them when
+you want tolerance, limits or sources. Read the breaking changes in the
+[changelog](CHANGELOG.md) first: the default language, the default lower-baseline pattern
+and the role of the title changed, and the baseline on the base branch is now the
+contract.
 
 ## Design
 
@@ -619,9 +732,9 @@ no I/O, and every report parser in `src/extractors` takes text and returns a num
 `src/action` and `src/cli` are thin shells that receive the environment, `fetch`, the
 file system and the clock as parameters, so the whole flow is tested with fakes.
 
-**Typechecked JavaScript.** Every source file carries `// @ts-check` and JSDoc types, and
-`npm run typecheck` runs `tsc` in strict mode over plain JavaScript. There is no build
-step.
+**Typechecked JavaScript.** Every source and test file carries `// @ts-check` and JSDoc
+types, and `npm run typecheck` runs `tsc` in strict mode over plain JavaScript. There is
+no build step.
 
 **Tested on itself.** CI runs the tests on Node.js 20, 22 and 24, the typecheck, the
 action against itself with metrics that must pass and metrics that must fail, and a

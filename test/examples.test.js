@@ -2,7 +2,8 @@
 /**
  * Validação dos exemplos publicados: os baselines de exemplo têm de ser aceites pelo
  * núcleo sem avisos, só podem usar formatos e campos que os extractors conhecem, estão na
- * forma exacta que a CLI escreve, e o schema JSON descreve exactamente o que o código aceita.
+ * forma exacta que a CLI escreve, e o schema JSON descreve exactamente o que o código aceita
+ * e vive na tag da major do package.json. O exemplo do GitLab governa pela merge base.
  */
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
@@ -29,8 +30,15 @@ const SCHEMA_FILE = 'schema/baseline.v2.schema.json';
 /** Schema JSON do baseline v2. */
 const SCHEMA_PATH = path.join(ROOT, SCHEMA_FILE);
 
-/** Fim esperado do `$id` do schema: o ficheiro na tag major `v1`. */
-const SCHEMA_ID_SUFFIX = `/quality-ratchet/raw/v1/${SCHEMA_FILE}`;
+/** Major do package.json (ex: `v2`): a tag onde o schema publicado vive. */
+const MAJOR_TAG = `v${JSON.parse(await readFile(path.join(ROOT, 'package.json'), 'utf8'))
+  .version.split('.')[0]}`;
+
+/** Fim esperado do `$id` do schema: o ficheiro na tag major. */
+const SCHEMA_ID_SUFFIX = `/quality-ratchet/raw/${MAJOR_TAG}/${SCHEMA_FILE}`;
+
+/** Exemplo de GitLab CI, relativo à pasta dos workflows de exemplo. */
+const GITLAB_EXAMPLE = 'gitlab-ci.yml';
 
 /** Exemplos que o README promete. */
 const EXPECTED_EXAMPLES = ['dotnet.json', 'node.json', 'python.json'];
@@ -279,13 +287,29 @@ describe('schema do baseline v2', () => {
     assert.deepEqual(rule?.then.required, ['pointer']);
   });
 
-  test('o $id aponta para o schema na tag v1', async () => {
+  test('o $id aponta para o schema na tag da major do package.json', async () => {
     const { schema } = await loadSchema();
 
     assert.ok(String(schema.$id).endsWith(SCHEMA_ID_SUFFIX), String(schema.$id));
   });
 
-  test('o $schema gravado pela CLI aponta para este ficheiro na tag v1', () => {
-    assert.ok(SCHEMA_URL.endsWith(`/v1/${SCHEMA_FILE}`), SCHEMA_URL);
+  test('o $schema gravado pela CLI aponta para este ficheiro na tag da major', () => {
+    assert.ok(SCHEMA_URL.endsWith(`/${MAJOR_TAG}/${SCHEMA_FILE}`), SCHEMA_URL);
+  });
+});
+
+describe('exemplo de GitLab CI', () => {
+  test('o --base-ref e a merge base com o ramo alvo', async () => {
+    const example = await readFile(path.join(WORKFLOWS_DIR, GITLAB_EXAMPLE), 'utf8');
+    const baseRef = /^\s+--base-ref\s+(\S+)$/m.exec(example)?.[1];
+    const mergeBase = /^\s*- BASE="\$\(git merge-base "origin\/\$TARGET" HEAD\)"$/m;
+
+    assert.ok(baseRef === '"$BASE"' && mergeBase.test(example), baseRef);
+  });
+
+  test('o clone nao e raso, para que a merge base exista', async () => {
+    const example = await readFile(path.join(WORKFLOWS_DIR, GITLAB_EXAMPLE), 'utf8');
+
+    assert.match(example, /^ {4}GIT_DEPTH: "0"$/m);
   });
 });

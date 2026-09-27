@@ -10,6 +10,10 @@
 #   to `token` in the last step.
 # - "Allow GitHub Actions to create and approve pull requests" must be enabled in the
 #   repository (or organisation) settings for the GITHUB_TOKEN to open it.
+# - Open pull requests need no update after a lock-in, as long as their workflow keeps the
+#   default checkout of pull_request (the merge commit, which already has the tightened
+#   baseline). A checkout of the head commit sees the old baseline as loosened: see
+#   "Governance" in the README.
 name: Lock in quality improvements
 
 on:
@@ -47,7 +51,7 @@ jobs:
         # A regression that reached main (for example a forgiven hotfix) must not stop
         # the other metrics from being locked in: the new baseline never loosens.
         continue-on-error: true
-        uses: LuisFernandes664/quality-ratchet@v1
+        uses: LuisFernandes664/quality-ratchet@v2
         with:
           comment: false
           write-baseline: quality-baseline.json

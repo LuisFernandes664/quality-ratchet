@@ -7,11 +7,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-09-27
+## [2.0.0] - 2026-09-27
 
-First release. Compared with the first commit of the repository, the action was
-rewritten around a pure core, gained a second baseline format, report parsers, baseline
-governance and a command line tool, and a few defaults changed.
+Compared with 1.0.0 (tag `v1.0.0`, commit fb8087b), the action was rewritten around a
+pure core, gained a second baseline format, report parsers, baseline governance and a
+command line tool, and a few defaults changed. `@v1` stays on 1.0.0, which cannot read a
+version 2 baseline: see "Upgrading from v1" in the README.
 
 ### Breaking changes
 
@@ -29,6 +30,10 @@ governance and a command line tool, and a few defaults changed.
 - The action runs on `node24` (was `node20`), from `src/index.js` (was `src/index.mjs`).
 - The `comment` input accepts only `true` or `false` (in any letter case), like the new
   `strict` input; any other value fails the run instead of being read as `false`.
+- An empty `bypass-label` or `lower-baseline-pattern` now turns that escape hatch off: no
+  label forgives a failure, and no title can loosen the baseline. It used to fall back to
+  the default, so a `with:` value taken from an unset variable kept the default. The other
+  inputs, except `token`, still fall back to their default when empty.
 - The `regressions` output lists every failing metric (regressed, missing, invalid or
   outside a limit), each as `{name, status, before, after, delta}`. It used to list only
   regressed metrics, with a `direction` field; missing metrics were left out.
@@ -57,13 +62,24 @@ governance and a command line tool, and a few defaults changed.
 - Support for Gitea and Forgejo Actions: the API URL comes from `GITHUB_API_URL`, and the
   base64 responses of their contents API are decoded. Not covered by CI.
 - Command line tool `quality-ratchet` with the `check`, `update`, `init` and `migrate`
-  commands; `check --base-ref` applies the same governance through git.
-- Reusable workflow `.github/workflows/quality-ratchet.yml`.
+  commands; `check --base-ref` governs through git, with the baseline of the given commit
+  as the contract. Outside a merge with the target branch, that commit must be the merge
+  base: the README and the GitLab example use `git merge-base`.
+- Reusable workflow `.github/workflows/quality-ratchet.yml`, with the optional secrets
+  `collect-env` (`NAME=VALUE` lines, masked and exported only to the collect script) and
+  `github-token` (the ratchet's token instead of `github.token`).
 - Examples for Node.js, Python, .NET, a monorepo, locking in improvements on `main`, and
   GitLab CI.
-- Release workflow that moves the major tag (`v1`) to each published release.
-- Typecheck of the JavaScript sources with JSDoc and `tsc` in strict mode, and package
-  metadata (`bin`, `exports`, `files`) for use with `npx`.
+- Release workflow that moves the major tag (`v2`) when a stable release is published or a
+  pre-release is promoted to a release (event `released`), and only when that release is
+  the highest `v2.x.y`: a patch for an older minor does not move the tag back.
+- README notes on pinning (the reusable workflow runs the action by its major tag, so
+  pinning the workflow by SHA does not pin the gate; the command line tool is pinned with
+  `#<ref>`), on the checkout governance needs (the merge commit, not `head.sha`), on
+  merging JUnit reports written one file per class (Maven Surefire, Gradle), and on the
+  Node.js of the job image on Gitea and Forgejo runners.
+- Typecheck of the JavaScript sources and tests with JSDoc and `tsc` in strict mode, and
+  package metadata (`bin`, `exports`, `files`) for use with `npx`.
 
 ### Changed
 
@@ -94,5 +110,20 @@ governance and a command line tool, and a few defaults changed.
 - `src/ratchet.js` and `src/index.mjs`, replaced by `src/core`, `src/action` and
   `src/index.js`.
 
-[Unreleased]: https://github.com/LuisFernandes664/quality-ratchet/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v1.0.0
+## [1.0.0] - 2026-08-30
+
+First release, published as the `v1.0.0` and `v1` tags.
+
+### Added
+
+- The action (`node20`, `src/index.mjs`): compares a flat metrics file with a committed
+  baseline (`metrics` plus `rules.monotonic_down` and `rules.monotonic_up`) and fails the
+  pull request when a metric regresses or is missing.
+- A summary in the job summary and in one pull request comment updated on every run, and
+  the `passed`, `summary` and `regressions` outputs. Messages in Portuguese.
+- The `bypass-label` (default `hotfix-bypass-ratchet`) and a title matching
+  `lower-baseline-pattern` (default `^(chore: lower baseline|refactor:)`) forgive a failure.
+
+[Unreleased]: https://github.com/LuisFernandes664/quality-ratchet/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.0.0
+[1.0.0]: https://github.com/LuisFernandes664/quality-ratchet/tree/v1.0.0

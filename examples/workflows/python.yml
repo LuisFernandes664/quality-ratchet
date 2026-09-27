@@ -37,4 +37,4 @@ jobs:
           # or not valid JSON makes the metric fail in the ratchet, so nothing is hidden.
           pip-audit -r requirements.txt -f json -o reports/pip-audit.json || true
 
-      - uses: LuisFernandes664/quality-ratchet@v1
+      - uses: LuisFernandes664/quality-ratchet@v2

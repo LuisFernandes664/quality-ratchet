@@ -50,4 +50,4 @@ jobs:
         # Semgrep exits with 0 when it finds issues (unless --error is given).
         run: semgrep scan --config p/csharp --sarif --output reports/semgrep.sarif
 
-      - uses: LuisFernandes664/quality-ratchet@v1
+      - uses: LuisFernandes664/quality-ratchet@v2

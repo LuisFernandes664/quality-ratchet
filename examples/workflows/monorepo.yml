@@ -40,7 +40,7 @@ jobs:
           npx jest --coverage --coverageReporters=lcov
           npx eslint . -f json -o reports/eslint.json || [ $? -eq 1 ]
 
-      - uses: LuisFernandes664/quality-ratchet@v1
+      - uses: LuisFernandes664/quality-ratchet@v2
         with:
           name: ${{ matrix.package }}
           baseline: packages/${{ matrix.package }}/quality-baseline.json

@@ -1,6 +1,6 @@
 {
   "name": "quality-ratchet",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Fails a pull request when a quality metric regresses against its baseline.",
   "type": "module",
   "license": "MIT",
