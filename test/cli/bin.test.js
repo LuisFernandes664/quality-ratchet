@@ -14,7 +14,9 @@ const execFileAsync = promisify(execFile);
 const BIN = fileURLToPath(new URL('../../bin/quality-ratchet.js', import.meta.url));
 
 /**
- * Corre o executável num processo novo, com o mesmo Node dos testes.
+ * Corre o executável num processo novo, com o mesmo Node dos testes. Uma saída com código
+ * de erro é um resultado; uma falha a lançar o processo (ENOENT, maxBuffer) ou uma morte
+ * por sinal propagam-se tal como vieram.
  * @param {string} cwd
  * @param {string[]} args
  * @returns {Promise<{code: number, stdout: string, stderr: string}>}
@@ -24,7 +26,8 @@ async function runBin(cwd, args) {
     const { stdout, stderr } = await execFileAsync(process.execPath, [BIN, ...args], { cwd });
     return { code: 0, stdout, stderr };
   } catch (cause) {
-    const failure = /** @type {{code: number, stdout: string, stderr: string}} */ (cause);
+    const failure = /** @type {{code?: unknown, stdout: string, stderr: string}} */ (cause);
+    if (typeof failure.code !== 'number') throw cause;
     return { code: failure.code, stdout: failure.stdout, stderr: failure.stderr };
   }
 }
@@ -84,7 +87,7 @@ describe('bin/quality-ratchet.js', () => {
 
     const result = await runBin(dir, ['check']);
 
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 1, result.stderr);
     assert.match(result.stderr, /^error: coverage regressed: 70 -> 69$/m);
   });
 
@@ -96,14 +99,14 @@ describe('bin/quality-ratchet.js', () => {
 
     const result = await runBin(dir, ['update']);
 
-    assert.equal(result.code, 0);
+    assert.equal(result.code, 0, result.stderr);
     assert.equal((await readJson(dir, 'quality-baseline.json')).metrics.lint.value, 2);
   });
 
   test('erro de utilizacao sai com 2', async () => {
     const result = await runBin(dir, ['deploy']);
 
-    assert.equal(result.code, 2);
+    assert.equal(result.code, 2, result.stderr);
     assert.match(result.stderr, /^error: unknown command "deploy"/);
   });
 
@@ -115,7 +118,7 @@ describe('bin/quality-ratchet.js', () => {
 
     const result = await runBinClosingStdout(dir, ['check']);
 
-    assert.equal(result.code, 0);
+    assert.equal(result.code, 0, result.stderr);
   });
 
   test('saida fechada cedo nao mostra o erro de escrita', async () => {
@@ -137,6 +140,6 @@ describe('bin/quality-ratchet.js', () => {
 
     const result = await runBinClosingStdout(dir, ['check']);
 
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 1, result.stderr);
   });
 });

@@ -22,6 +22,13 @@ import { DEFAULTS, EXIT, OUTPUT_FORMATS } from '../defaults.js';
 /** @typedef {{base: Baseline|null, notes: Issue[]}} BaseContract */
 
 /**
+ * Dica que acompanha o afrouxamento sem autorização: comparar com a ponta do ramo de
+ * destino, e não com a merge base, faz um ramo atrasado parecer afrouxar o baseline.
+ * @type {Issue}
+ */
+const BASE_REF_HINT = Object.freeze({ code: 'note_base_ref_hint', params: Object.freeze({}) });
+
+/**
  * @typedef {object} CheckOptions
  * @property {string} baseline caminho do baseline
  * @property {string} metrics caminho do ficheiro de métricas plano
@@ -37,7 +44,10 @@ import { DEFAULTS, EXIT, OUTPUT_FORMATS } from '../defaults.js';
  */
 
 /**
- * Corre a catraca e imprime o sumário (stdout) e as mensagens de log (stderr).
+ * Corre a catraca e imprime o sumário (stdout) e as mensagens de log (stderr). Com o
+ * baseline da revisão base, as métricas cuja source o ramo mudou ou retirou são medidas
+ * também com a source dessa revisão, que é a que conta enquanto a mudança não for
+ * autorizada.
  * @param {CommandContext} ctx
  * @param {OptionValues} values
  * @returns {Promise<number>} 0 verde ou perdoado, 1 a catraca falhou
@@ -49,6 +59,7 @@ export async function runCheck(ctx, values) {
   const collected = await collectMeasurements(ctx.fs, head, {
     metricsPath: options.metrics,
     baselineDir: baselineDir(ctx, options.baseline),
+    base,
   });
   const report = runRatchet({ head, base, ...collected, ...ratchetSettings(options, ctx.today) });
   ctx.stdout(renderReport(report, options, notes, ctx.t));
@@ -68,7 +79,8 @@ export async function runCheck(ctx, values) {
 function logReport(ctx, report) {
   logIssues(ctx, 'warning', report.warnings);
   warnUntracked(ctx, report.untracked);
-  for (const entry of reportLogEntries(report, ctx.t)) ctx.log(entry.level, entry.text);
+  const entries = reportLogEntries(report, ctx.t, BASE_REF_HINT);
+  for (const entry of entries) ctx.log(entry.level, entry.text);
 }
 
 /**
@@ -194,7 +206,7 @@ function oneLine(text) {
  */
 function renderReport(report, options, notes, t) {
   if (options.format === 'json') return JSON.stringify(jsonReport(report), null, 2);
-  return renderSummary(report, t, { name: options.name, notes });
+  return renderSummary(report, t, { name: options.name, notes, hint: BASE_REF_HINT });
 }
 
 /**

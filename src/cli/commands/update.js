@@ -8,7 +8,7 @@ import { serializeBaseline } from '../../core/baseline.js';
 import { exceedsTolerance, isBetter } from '../../core/compare.js';
 import { ownValue } from '../../core/guards.js';
 import { toNumber } from '../../core/measurements.js';
-import { formatNumber } from '../../core/summary.js';
+import { formatNumbers } from '../../core/summary.js';
 import { rebaseline, tightenBaseline } from '../../core/tighten.js';
 import { collectMeasurements, loadBaseline } from '../../run.js';
 import { flagOption, nonEmptyOption } from '../args.js';
@@ -17,6 +17,7 @@ import { DEFAULTS, EXIT } from '../defaults.js';
 
 /** @typedef {import('../../core/types.js').Baseline} Baseline */
 /** @typedef {import('../../core/types.js').Measurement} Measurement */
+/** @typedef {import('../../core/messages.js').Translator} Translator */
 /** @typedef {import('../context.js').CommandContext} CommandContext */
 /** @typedef {import('../args.js').OptionValues} OptionValues */
 
@@ -125,7 +126,8 @@ function warnNotLowered(ctx, head, measurements) {
     const after = measuredValue(measurements, rule.name);
     const before = rule.value;
     if (before === null || after === null || !regressed(rule, before, after)) return [];
-    return [`${rule.name} (${formatNumber(before)} -> ${formatNumber(after)})`];
+    const [shownBefore, shownAfter] = formatNumbers([before, after]);
+    return [`${rule.name} (${shownBefore} -> ${shownAfter})`];
   });
   if (names.length === 0) return;
   ctx.log('warning', ctx.t('cli_update_not_lowered', { names: names.join(', ') }));
@@ -197,10 +199,32 @@ function measuredValue(measurements, name) {
  * @returns {string[]}
  */
 function describeChanges(ctx, head, result) {
-  const valueOf = (/** @type {Baseline} */ baseline, /** @type {string} */ name) => {
-    const value = baseline.metrics.find((rule) => rule.name === name)?.value ?? null;
-    return value === null ? ctx.t('missing_value') : formatNumber(value);
-  };
-  return result.changed.map((name) => (
-    `- ${name}: ${valueOf(head, name)} -> ${valueOf(result.baseline, name)}`));
+  return result.changed.map((name) => {
+    const [before, after] = formatPair(ctx.t, valueOf(head, name), valueOf(result.baseline, name));
+    return `- ${name}: ${before} -> ${after}`;
+  });
+}
+
+/**
+ * Valor de uma métrica no baseline, ou null quando está vazio.
+ * @param {Baseline} baseline
+ * @param {string} name
+ * @returns {number|null}
+ */
+function valueOf(baseline, name) {
+  return baseline.metrics.find((rule) => rule.name === name)?.value ?? null;
+}
+
+/**
+ * Valor anterior e novo com as mesmas casas decimais, para que valores diferentes não
+ * pareçam iguais (ex: 0.81234 e 0.81231); um valor vazio aparece como tal.
+ * @param {Translator} t
+ * @param {number|null} before
+ * @param {number|null} after
+ * @returns {string[]}
+ */
+function formatPair(t, before, after) {
+  const pair = [before, after];
+  const texts = formatNumbers(pair.flatMap((value) => (value === null ? [] : [value])));
+  return pair.map((value) => (value === null ? t('missing_value') : String(texts.shift())));
 }

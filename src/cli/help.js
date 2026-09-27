@@ -22,6 +22,13 @@ import { DEFAULTS } from './defaults.js';
 /** Largura da coluna das opções. */
 const COLUMN = 34;
 
+/**
+ * Comando que dá a merge base com o ramo de destino, a revisão recomendada para
+ * `--base-ref`: a ponta do ramo de destino atribuiria a um ramo atrasado todos os apertos
+ * feitos desde então no destino, como afrouxamentos e regressões.
+ */
+const MERGE_BASE = 'git merge-base origin/main HEAD';
+
 /** @type {HelpText} */
 const EN = {
   usage: 'Usage: quality-ratchet [command] [options]',
@@ -42,6 +49,9 @@ const EN = {
         ['--baseline <path>', `Baseline file (default: ${DEFAULTS.baseline})`],
         ['--metrics <path>', `Flat metrics file (default: ${DEFAULTS.metrics})`],
         ['--base-ref <ref>', 'Git ref whose baseline is the contract (enables governance)'],
+        ['', 'Use the merge base, not the tip of the target branch,'],
+        ['', 'unless the working directory already contains that tip:'],
+        ['', `--base-ref "$(${MERGE_BASE})"`],
         ['--title <text>', 'Pull request title, matched against the lower-baseline pattern'],
         ['--labels <a,b>', 'Pull request labels, comma separated'],
         ['--bypass-label <label>',
@@ -113,6 +123,9 @@ const PT = {
         ['--baseline <caminho>', `Ficheiro do baseline (omissão: ${DEFAULTS.baseline})`],
         ['--metrics <caminho>', `Ficheiro de métricas plano (omissão: ${DEFAULTS.metrics})`],
         ['--base-ref <ref>', 'Revisão git cujo baseline é o contrato (activa a governação)'],
+        ['', 'Usar a merge base, e não a ponta do ramo de destino,'],
+        ['', 'salvo se a pasta de trabalho já contiver essa ponta:'],
+        ['', `--base-ref "$(${MERGE_BASE})"`],
         ['--title <texto>', 'Título do pull request, comparado com o padrão de descida'],
         ['--labels <a,b>', 'Labels do pull request, separadas por vírgulas'],
         ['--bypass-label <label>',

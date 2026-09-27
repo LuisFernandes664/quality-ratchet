@@ -52,6 +52,15 @@ describe('migrate', () => {
     assert.equal(result.stderr, 'warning: Values without a rule were dropped: legacy.');
   });
 
+  test('o aviso de descarte nomeia tambem os valores que nao sao numeros', async () => {
+    const baseline = { ...BASELINE_V1, metrics: { ...BASELINE_V1.metrics, note: 'texto' } };
+    await writeFiles(dir, { 'quality-baseline.json': baseline });
+
+    const result = await runIn(dir, ['migrate']);
+
+    assert.equal(result.stderr, 'warning: Values without a rule were dropped: legacy, note.');
+  });
+
   test('--language pt traduz os avisos', async () => {
     await writeFiles(dir, { 'quality-baseline.json': BASELINE_V1 });
 

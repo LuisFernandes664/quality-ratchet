@@ -91,6 +91,23 @@ describe('update', () => {
     assert.equal(result.stdout, '- coverage: 70 -> 75\nWrote quality-baseline.json.');
   });
 
+  test('descreve valores proximos com as casas decimais que os distinguem', async () => {
+    await setup(baselineV2({ ratio: { value: 0.81234, direction: 'down' } }), { ratio: 0.81231 });
+
+    const result = await runIn(dir, ['update']);
+
+    assert.equal(result.stdout, '- ratio: 0.81234 -> 0.81231\nWrote quality-baseline.json.');
+  });
+
+  test('descreve um valor vazio que foi preenchido', async () => {
+    await setup(baselineV2({ coverage: { value: null, direction: 'up' } }), { coverage: 42 });
+
+    const result = await runIn(dir, ['update']);
+
+    const missing = EN('missing_value');
+    assert.equal(result.stdout, `- coverage: ${missing} -> 42\nWrote quality-baseline.json.`);
+  });
+
   test('escreve JSON indentado a dois espacos com fim de linha', async () => {
     await setup(BASELINE, { coverage: 75, lint: 10 });
 
@@ -185,6 +202,14 @@ describe('update', () => {
     test('nao gera avisos', async () => {
       assert.equal((await runIn(dir, ['update'])).stderr, '');
     });
+  });
+
+  test('o aviso das regressoes distingue valores proximos', async () => {
+    await setup(baselineV2({ ratio: { value: 0.81231, direction: 'down' } }), { ratio: 0.81234 });
+
+    const result = await runIn(dir, ['update']);
+
+    assert.equal(result.stderr, notLowered('ratio (0.81231 -> 0.81234)'));
   });
 
   test('regressao dentro da tolerancia nao gera aviso', async () => {
@@ -334,6 +359,62 @@ describe('update', () => {
       const { rules } = await readJson(dir, 'quality-baseline.json');
 
       assert.deepEqual(rules, { monotonic_down: ['lint'], monotonic_up: ['coverage'] });
+    });
+  });
+
+  describe('campos que o baseline nao conhece', () => {
+    beforeEach(async () => {
+      const source = { format: 'json', path: 'r.json', pointer: '/v', feild: 'x' };
+      const coverage = { value: 70, direction: 'up', tolerence: 1, source };
+      await writeFiles(dir, {
+        'quality-baseline.json': { $comment: 'nota', ...baselineV2({ coverage }) },
+        'r.json': '{"v": 75}',
+      });
+      await runIn(dir, ['update']);
+    });
+
+    test('reescreve o baseline com a melhoria', async () => {
+      const { metrics } = await readJson(dir, 'quality-baseline.json');
+
+      assert.equal(metrics.coverage.value, 75);
+    });
+
+    test('mantem o $comment', async () => {
+      assert.equal((await readJson(dir, 'quality-baseline.json')).$comment, 'nota');
+    });
+
+    test('mantem o tolerence', async () => {
+      const { metrics } = await readJson(dir, 'quality-baseline.json');
+
+      assert.equal(metrics.coverage.tolerence, 1);
+    });
+
+    test('mantem o source.feild', async () => {
+      const { metrics } = await readJson(dir, 'quality-baseline.json');
+
+      assert.equal(metrics.coverage.source.feild, 'x');
+    });
+  });
+
+  describe('descricao que nao e texto', () => {
+    /** @type {import('./helpers.js').CliRun} */
+    let result;
+    /** @type {string} */
+    let before;
+
+    beforeEach(async () => {
+      const coverage = { value: 70, direction: 'up', description: ['x'] };
+      await setup(baselineV2({ coverage }), { coverage: 75 });
+      before = await readText(dir, 'quality-baseline.json');
+      result = await runIn(dir, ['update']);
+    });
+
+    test('sai com 2', () => {
+      assert.equal(result.code, 2);
+    });
+
+    test('nao reescreve o baseline', async () => {
+      assert.equal(await readText(dir, 'quality-baseline.json'), before);
     });
   });
 

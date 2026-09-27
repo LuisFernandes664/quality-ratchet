@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 
 import { createGit } from '../../src/cli/git.js';
 import { ConfigError } from '../../src/core/errors.js';
-import { makeTempDir, removeDir, writeFiles } from './helpers.js';
+import { makeTempDir, removeDir, runIn, writeFiles } from './helpers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -48,10 +48,7 @@ async function hasGit() {
 /** Testes que precisam do git real: saltados só quando o git não existe no PATH. */
 const gitTest = (await hasGit()) ? test : test.skip;
 
-/**
- * Testes com o git real e ligações simbólicas de pastas, que no Windows exigem privilégios.
- * @type {typeof test}
- */
+/** Testes com o git real e ligações simbólicas de pastas, que no Windows exigem privilégios. */
 const linkTest = (await hasGit()) && process.platform !== 'win32' ? test : test.skip;
 
 /**
@@ -412,5 +409,84 @@ describe('createGit com executor falso', () => {
 
     await assert.rejects(createGit(run, realpath).show('main', '/link/b.json', '/repo'),
       isShowFailed);
+  });
+});
+
+/**
+ * Baseline v2 com a cobertura no valor dado, em JSON.
+ * @param {number} value
+ * @returns {string}
+ */
+function coverageBaseline(value) {
+  return JSON.stringify({ version: 2, metrics: { coverage: { value, direction: 'up' } } });
+}
+
+/**
+ * Repositório com um ramo atrasado face ao destino, como num merge request do GitLab: o
+ * `feature` sai do `main` com a cobertura a 80 e só muda outro ficheiro; depois o `main`
+ * aperta a cobertura para 85. O checkout fica no `feature`, com a medição a 82.
+ * @returns {Promise<string>} pasta do repositório
+ */
+async function branchBehindTarget() {
+  const repo = await commitRepository({
+    'quality-baseline.json': coverageBaseline(80),
+    'src/a.txt': 'a\n',
+  });
+  await git(repo, ['checkout', '--quiet', '-b', 'feature']);
+  await writeFiles(repo, { 'src/a.txt': 'b\n' });
+  await git(repo, ['commit', '--quiet', '--no-verify', '-am', 'feature']);
+  await git(repo, ['checkout', '--quiet', 'main']);
+  await writeFiles(repo, { 'quality-baseline.json': coverageBaseline(85) });
+  await git(repo, ['commit', '--quiet', '--no-verify', '-am', 'apertar']);
+  await git(repo, ['checkout', '--quiet', 'feature']);
+  await writeFiles(repo, { 'metrics-current.json': '{"coverage": 82}' });
+  return repo;
+}
+
+/**
+ * Corre o check em JSON contra a revisão dada, com o git real.
+ * @param {string} repo
+ * @param {string} ref
+ * @returns {Promise<{code: number, loosened: string[]}>}
+ */
+async function checkAgainst(repo, ref) {
+  const argv = ['check', '--format', 'json', '--base-ref', ref];
+  const result = await runIn(repo, argv, { git: createGit() });
+  return { code: result.code, loosened: JSON.parse(result.stdout).loosened };
+}
+
+describe('check com o git real num ramo atrasado face ao destino', () => {
+  /** @type {string} */
+  let repo;
+  /** @type {{code: number, loosened: string[]}} */
+  let mergeBase;
+  /** @type {{code: number, loosened: string[]}} */
+  let targetTip;
+
+  before(async () => {
+    if (!(await hasGit())) return;
+    repo = await branchBehindTarget();
+    mergeBase = await checkAgainst(repo, (await git(repo, ['merge-base', 'main', 'HEAD'])).trim());
+    targetTip = await checkAgainst(repo, 'main');
+  });
+
+  after(async () => {
+    if (repo) await removeDir(repo);
+  });
+
+  gitTest('contra a merge base passa', () => {
+    assert.equal(mergeBase.code, 0);
+  });
+
+  gitTest('contra a merge base nao ve afrouxamento', () => {
+    assert.deepEqual(mergeBase.loosened, []);
+  });
+
+  gitTest('contra a ponta do destino falha', () => {
+    assert.equal(targetTip.code, 1);
+  });
+
+  gitTest('contra a ponta do destino ve os apertos do destino como afrouxamento', () => {
+    assert.deepEqual(targetTip.loosened, ['coverage']);
   });
 });

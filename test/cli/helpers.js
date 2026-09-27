@@ -106,10 +106,11 @@ export async function readJson(dir, name) {
  */
 
 /**
- * Corre a CLI na pasta indicada, com sistema de ficheiros real e git falso.
+ * Corre a CLI na pasta indicada, com sistema de ficheiros real e, por omissão, git falso.
  * @param {string} cwd
  * @param {string[]} argv
- * @param {{git?: FakeGit, fs?: import('../../src/cli/context.js').CliFileSystem}} [options]
+ * @param {{git?: import('../../src/cli/git.js').Git,
+ *   fs?: import('../../src/cli/context.js').CliFileSystem}} [options]
  * @returns {Promise<CliRun>}
  */
 export async function runIn(cwd, argv, options = {}) {

@@ -30,6 +30,9 @@ const LOWERED = baselineV2({
   lint: { value: 10, direction: 'down' },
 });
 
+/** Regra de cobertura a 80, sem source. */
+const COVERAGE_80 = Object.freeze({ value: 80, direction: 'up' });
+
 describe('check', () => {
   /** @type {string} */
   let dir;
@@ -190,6 +193,39 @@ describe('check', () => {
     const result = await runIn(dir, ['check', '--format', 'json']);
 
     assert.match(result.stderr, /^warning: Measured but not tracked by the baseline: extra\.$/m);
+  });
+
+  describe('valor medido fora do alcance dos numeros', () => {
+    /** @type {CliRun} */
+    let result;
+
+    beforeEach(async () => {
+      await writeFiles(dir, {
+        'quality-baseline.json': baselineV2({ coverage: { value: 70, direction: 'up' } }),
+        'metrics-current.json': '{"coverage": "1e400"}',
+      });
+      result = await runIn(dir, ['check', '--write-baseline', 'new.json']);
+    });
+
+    test('sai com 1', () => {
+      assert.equal(result.code, 1);
+    });
+
+    test('nao escreve o ficheiro de --write-baseline', async () => {
+      await assert.rejects(readText(dir, 'new.json'), { code: 'ENOENT' });
+    });
+  });
+
+  test('--language pt traduz o motivo de um relatorio que nao se interpreta', async () => {
+    const source = { format: 'sarif', path: 'r.sarif' };
+    await writeFiles(dir, {
+      'quality-baseline.json': baselineV2({ alerts: { value: 0, direction: 'down', source } }),
+      'r.sarif': '{"version": "2.1.0", "runs": {}}',
+    });
+
+    const result = await runIn(dir, ['check', '--language', 'pt']);
+
+    assert.match(result.stderr, /^error: alerts: .*"runs" não é uma lista$/m);
   });
 
   describe('--format invalido', () => {
@@ -428,6 +464,18 @@ describe('check', () => {
       test('diz que o baseline foi afrouxado', () => {
         assert.match(result.stderr, /loosens the baseline \(`coverage`\)/);
       });
+
+      test('o erro sugere confirmar que --base-ref e a merge base', () => {
+        assert.match(result.stderr, /check that `--base-ref` is the merge base/);
+      });
+
+      test('o sumario sugere confirmar que --base-ref e a merge base', () => {
+        assert.match(result.stdout, /> If this .* check that `--base-ref` is the merge base/);
+      });
+
+      test('a dica nao fala do checkout do actions/checkout', () => {
+        assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /actions\/checkout/);
+      });
     });
 
     describe('baixar o baseline com titulo autorizado', () => {
@@ -492,6 +540,56 @@ describe('check', () => {
       const result = await runIn(dir, ['check', '--base-ref', 'main'], { git });
 
       assert.match(result.stderr, /^error: coverage regressed: 70 -> 65$/m);
+    });
+
+    describe('source trocada pelo ramo', () => {
+      /** @type {CliRun} */
+      let result;
+
+      beforeEach(async () => {
+        const lcov = { format: 'lcov', path: 'coverage/lcov.info' };
+        const fake = { format: 'json', path: 'fake.json', pointer: '/v' };
+        await writeFiles(dir, {
+          'quality-baseline.json': baselineV2({ coverage: { ...COVERAGE_80, source: fake } }),
+          'fake.json': '{"v": 99}',
+          'coverage/lcov.info': 'SF:a.js\nLF:10\nLH:5\nend_of_record\n',
+        });
+        const base = baselineV2({ coverage: { ...COVERAGE_80, source: lcov } });
+        const git = fakeGit({ 'main:quality-baseline.json': base });
+        result = await runIn(dir, ['check', '--base-ref', 'main'], { git });
+      });
+
+      test('falha', () => {
+        assert.equal(result.code, 1);
+      });
+
+      test('diz que o baseline foi afrouxado', () => {
+        assert.match(result.stderr, /loosens the baseline \(`coverage`\)/);
+      });
+
+      test('mede a metrica com a source da revisao base', () => {
+        assert.match(result.stderr, /^error: coverage regressed: 80 -> 50$/m);
+      });
+    });
+
+    describe('baixar o baseline sem autorizacao e medir entre os dois valores', () => {
+      /** @type {CliRun} */
+      let result;
+
+      beforeEach(async () => {
+        await setup(LOWERED, { coverage: 65, lint: 10 });
+        const git = fakeGit({ 'main:quality-baseline.json': BASELINE });
+        const argv = ['check', '--base-ref', 'main', '--write-baseline', 'new.json'];
+        result = await runIn(dir, argv, { git });
+      });
+
+      test('nao anuncia melhorias por fixar', () => {
+        assert.doesNotMatch(result.stderr, /Improvements to lock in/);
+      });
+
+      test('nao escreve o ficheiro de --write-baseline', async () => {
+        await assert.rejects(readText(dir, 'new.json'), { code: 'ENOENT' });
+      });
     });
 
     describe('sem baseline nessa revisao', () => {
