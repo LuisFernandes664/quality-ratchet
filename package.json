@@ -1,15 +1,48 @@
 {
   "name": "quality-ratchet",
   "version": "1.0.0",
-  "description": "GitHub Action que impede metricas de qualidade de regredirem. Sem dependencias.",
+  "description": "Fails a pull request when a quality metric regresses against its baseline.",
   "type": "module",
-  "private": true,
   "license": "MIT",
+  "author": "Luis Fernandes",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LuisFernandes664/quality-ratchet.git"
+  },
+  "keywords": [
+    "github-action",
+    "quality-gate",
+    "ratchet",
+    "coverage",
+    "mutation-testing",
+    "baseline",
+    "ci"
+  ],
   "engines": {
     "node": ">=20"
   },
+  "bin": {
+    "quality-ratchet": "bin/quality-ratchet.js"
+  },
+  "exports": {
+    ".": "./src/core/ratchet.js",
+    "./extractors": "./src/extractors/index.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "schema/",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test",
-    "coverage": "node --test --experimental-test-coverage"
+    "coverage": "node --test --experimental-test-coverage",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "~20.19.0",
+    "typescript": "~5.9.3"
   }
 }
