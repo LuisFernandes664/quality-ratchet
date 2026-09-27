@@ -1,0 +1,43 @@
+# Quality ratchet for a Node.js project, with examples/baselines/node.json committed as
+# quality-baseline.json at the repository root. Report paths in the baseline are relative
+# to the folder that holds the baseline file.
+name: Quality ratchet
+
+on:
+  pull_request:
+    # edited: the title can authorise lowering the baseline.
+    # labeled/unlabeled: the hotfix label forgives a failure.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: Collect reports
+        run: |
+          mkdir -p reports
+          # coverage/lcov.info
+          npx jest --coverage --coverageReporters=lcov
+          # ESLint exits with 1 when it finds problems: the ratchet decides, not ESLint.
+          # Any other exit code (a broken configuration) still fails the step.
+          npx eslint . -f json -o reports/eslint.json || [ $? -eq 1 ]
+          # reports/jscpd/jscpd-report.json
+          npx jscpd --reporters json --output reports/jscpd src
+          # npm audit exits with 1 when it finds vulnerabilities. A report that is missing
+          # or not valid JSON makes the metric fail in the ratchet, so nothing is hidden.
+          npm audit --json > reports/npm-audit.json || true
+          # reports/mutation/mutation.json
+          npx stryker run --reporters json,clear-text
+
+      - uses: LuisFernandes664/quality-ratchet@v1

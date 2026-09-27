@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "frozen_at": "2026-09-27",
+  "metrics": {
+    "coverage_lines": {
+      "value": 83.12,
+      "direction": "up",
+      "tolerance": 0.1,
+      "target": 90,
+      "source": {
+        "format": "cobertura",
+        "path": "coverage.xml",
+        "field": "lines"
+      }
+    },
+    "coverage_branches": {
+      "value": 71.9,
+      "direction": "up",
+      "tolerance": 0.1,
+      "source": {
+        "format": "cobertura",
+        "path": "coverage.xml",
+        "field": "branches"
+      },
+      "description": "Needs branch measurement: coverage run --branch."
+    },
+    "ruff_violations": {
+      "value": 42,
+      "direction": "down",
+      "source": {
+        "format": "sarif",
+        "path": "reports/ruff.sarif"
+      }
+    },
+    "vulnerabilities": {
+      "value": 0,
+      "direction": "down",
+      "max": 0,
+      "source": {
+        "format": "pip-audit",
+        "path": "reports/pip-audit.json"
+      },
+      "description": "Known vulnerabilities in the pinned requirements."
+    },
+    "tests": {
+      "value": 412,
+      "direction": "up",
+      "source": {
+        "format": "junit",
+        "path": "reports/junit.xml",
+        "field": "tests"
+      },
+      "description": "Deleting tests needs a pull request authorised to lower the baseline."
+    },
+    "tests_skipped": {
+      "value": 3,
+      "direction": "down",
+      "source": {
+        "format": "junit",
+        "path": "reports/junit.xml",
+        "field": "skipped"
+      }
+    }
+  }
+}

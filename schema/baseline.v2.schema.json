@@ -1,0 +1,189 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "quality-ratchet baseline (v2)",
+  "description": "Committed quality baseline. Each metric may only move in its direction.",
+  "type": "object",
+  "required": ["metrics"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "URL or path of this schema, for editor support."
+    },
+    "version": {
+      "const": 2,
+      "description": "Format version. A file whose metrics are all objects is read as v2."
+    },
+    "frozen_at": {
+      "type": "string",
+      "format": "date",
+      "description": "Date the values were last frozen (YYYY-MM-DD). Informative only."
+    },
+    "metrics": {
+      "type": "object",
+      "description": "One entry per metric, keyed by metric name.",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/metric" }
+    }
+  },
+  "definitions": {
+    "metric": {
+      "type": "object",
+      "required": ["value", "direction"],
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": ["number", "null"],
+          "description": "Frozen value. Only the update command accepts null, and fills it in."
+        },
+        "direction": {
+          "enum": ["up", "down"],
+          "description": "\"up\": may only increase (coverage). \"down\": may only decrease (lint)."
+        },
+        "tolerance": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0,
+          "description": "Absolute noise margin. A regression within it is tolerated, not failed."
+        },
+        "min": {
+          "type": "number",
+          "description": "Absolute lower limit. A value below it fails, whatever the baseline."
+        },
+        "max": {
+          "type": "number",
+          "description": "Absolute upper limit. A value above it fails, whatever the baseline."
+        },
+        "target": {
+          "type": "number",
+          "description": "Goal shown in the summary. Informative only."
+        },
+        "description": {
+          "type": "string",
+          "description": "Free text for humans. Informative only."
+        },
+        "source": { "$ref": "#/definitions/source" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Report the value is read from, instead of the flat metrics file.",
+      "required": ["format", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "lcov",
+            "istanbul",
+            "cobertura",
+            "stryker",
+            "sarif",
+            "eslint",
+            "jscpd",
+            "npm-audit",
+            "pip-audit",
+            "junit",
+            "json"
+          ],
+          "description": "Report format."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Report path, relative to the folder that holds the baseline file."
+        },
+        "field": {
+          "type": "string",
+          "description": "Value to read from the report. Each format has its own fields."
+        },
+        "pointer": {
+          "type": "string",
+          "description": "JSON Pointer (RFC 6901) to the value. Required by the json format."
+        },
+        "levels": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["error", "warning", "note", "none"] },
+          "description": "SARIF levels to count. All levels when omitted."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "format": { "const": "lcov" } }, "required": ["format"] },
+          "then": { "properties": { "field": { "enum": ["lines", "branches", "functions"] } } }
+        },
+        {
+          "if": { "properties": { "format": { "const": "istanbul" } }, "required": ["format"] },
+          "then": {
+            "properties": {
+              "field": { "enum": ["lines", "statements", "functions", "branches"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "format": { "const": "cobertura" } }, "required": ["format"] },
+          "then": { "properties": { "field": { "enum": ["lines", "branches"] } } }
+        },
+        {
+          "if": { "properties": { "format": { "const": "stryker" } }, "required": ["format"] },
+          "then": {
+            "properties": {
+              "field": {
+                "enum": ["score", "score_covered", "killed", "survived", "no_coverage", "timeout"]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "format": { "const": "sarif" } }, "required": ["format"] },
+          "then": { "properties": { "field": { "enum": ["count"] } } }
+        },
+        {
+          "if": { "properties": { "format": { "const": "eslint" } }, "required": ["format"] },
+          "then": { "properties": { "field": { "enum": ["total", "errors", "warnings"] } } }
+        },
+        {
+          "if": { "properties": { "format": { "const": "jscpd" } }, "required": ["format"] },
+          "then": {
+            "properties": { "field": { "enum": ["percentage", "clones", "duplicated_lines"] } }
+          }
+        },
+        {
+          "if": { "properties": { "format": { "const": "npm-audit" } }, "required": ["format"] },
+          "then": {
+            "properties": {
+              "field": {
+                "enum": [
+                  "total",
+                  "critical",
+                  "high",
+                  "moderate",
+                  "low",
+                  "info",
+                  "high+",
+                  "moderate+",
+                  "low+"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "format": { "const": "pip-audit" } }, "required": ["format"] },
+          "then": { "properties": { "field": { "enum": ["count"] } } }
+        },
+        {
+          "if": { "properties": { "format": { "const": "junit" } }, "required": ["format"] },
+          "then": {
+            "properties": { "field": { "enum": ["tests", "failures", "errors", "skipped"] } }
+          }
+        },
+        {
+          "if": { "properties": { "format": { "const": "json" } }, "required": ["format"] },
+          "then": { "required": ["pointer"], "properties": { "field": { "enum": ["value"] } } }
+        }
+      ]
+    }
+  },
+  "$id": "https://github.com/LuisFernandes664/quality-ratchet/raw/v1/schema/baseline.v2.schema.json"
+}

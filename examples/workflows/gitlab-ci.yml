@@ -1,0 +1,39 @@
+# Quality ratchet on GitLab merge requests, through the command line interface.
+#
+# - --base-ref reads the baseline of the target branch with git, so the governance
+#   rules (loosening needs an authorising title) apply as they do on GitHub.
+# - --title and --labels come from the merge request. The --option=value form accepts a
+#   title that starts with "-" (--title "-x" is rejected). GitLab does not start a new
+#   pipeline when only the title or the labels change: run the pipeline again after
+#   adding the hotfix label or renaming the merge request.
+# - The summary is printed as Markdown and kept as an artifact.
+# - The reports are the ones examples/baselines/node.json reads (see node.yml for why
+#   eslint and npm audit exit codes are relaxed). Report paths in the baseline are
+#   relative to the folder that holds quality-baseline.json.
+quality-ratchet:
+  image: node:24
+  stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - npm ci
+    - mkdir -p reports
+    - npx jest --coverage --coverageReporters=lcov
+    - npx eslint . -f json -o reports/eslint.json || [ $? -eq 1 ]
+    - npx jscpd --reporters json --output reports/jscpd src
+    - npm audit --json > reports/npm-audit.json || true
+    - npx stryker run --reporters json,clear-text
+    - TARGET="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - git fetch --depth=1 origin "+refs/heads/$TARGET:refs/remotes/origin/$TARGET"
+    - >-
+      npx --yes github:LuisFernandes664/quality-ratchet check
+      --base-ref "origin/$TARGET"
+      --title="$CI_MERGE_REQUEST_TITLE"
+      --labels="$CI_MERGE_REQUEST_LABELS"
+      > quality-ratchet.md
+  after_script:
+    - "[ ! -f quality-ratchet.md ] || cat quality-ratchet.md"
+  artifacts:
+    when: always
+    paths:
+      - quality-ratchet.md

@@ -1,0 +1,81 @@
+{
+  "version": 2,
+  "frozen_at": "2026-09-27",
+  "metrics": {
+    "coverage_lines": {
+      "value": 78.42,
+      "direction": "up",
+      "tolerance": 0.1,
+      "target": 90,
+      "source": {
+        "format": "lcov",
+        "path": "coverage/lcov.info",
+        "field": "lines"
+      }
+    },
+    "coverage_branches": {
+      "value": 64.2,
+      "direction": "up",
+      "tolerance": 0.1,
+      "source": {
+        "format": "lcov",
+        "path": "coverage/lcov.info",
+        "field": "branches"
+      }
+    },
+    "lint_errors": {
+      "value": 0,
+      "direction": "down",
+      "max": 0,
+      "source": {
+        "format": "eslint",
+        "path": "reports/eslint.json",
+        "field": "errors"
+      },
+      "description": "Hard limit: any lint error fails, even if the value is ever raised."
+    },
+    "lint_warnings": {
+      "value": 37,
+      "direction": "down",
+      "source": {
+        "format": "eslint",
+        "path": "reports/eslint.json",
+        "field": "warnings"
+      }
+    },
+    "duplication_pct": {
+      "value": 2.81,
+      "direction": "down",
+      "tolerance": 0.05,
+      "source": {
+        "format": "jscpd",
+        "path": "reports/jscpd/jscpd-report.json",
+        "field": "percentage"
+      }
+    },
+    "vulnerabilities_high": {
+      "value": 0,
+      "direction": "down",
+      "max": 0,
+      "source": {
+        "format": "npm-audit",
+        "path": "reports/npm-audit.json",
+        "field": "high+"
+      },
+      "description": "High and critical advisories in the dependency tree."
+    },
+    "mutation_score": {
+      "value": 61.5,
+      "direction": "up",
+      "tolerance": 0.5,
+      "min": 50,
+      "target": 80,
+      "source": {
+        "format": "stryker",
+        "path": "reports/mutation/mutation.json",
+        "field": "score"
+      },
+      "description": "Time-outs make mutation scores slightly noisy, hence the tolerance."
+    }
+  }
+}
