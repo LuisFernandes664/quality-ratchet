@@ -8,16 +8,21 @@ name: Release
 #   a promotion, so it is the only event that sees every release that should move the tag.
 # - A patch for an older minor (for example v2.0.1 after v2.1.0) does not move the tag
 #   back: the tag only moves when the release is the highest vMAJOR.x.y on the remote.
+#
+# Run it by hand (workflow_dispatch) on main to publish a release from the CHANGELOG entry
+# of the version in package.json. A release created with GITHUB_TOKEN does not trigger
+# other workflows, so that job moves the major tag itself.
 
 on:
   release:
     types: [released]
+  workflow_dispatch:
 
 permissions: {}
 
 jobs:
   move-major-tag:
-    if: ${{ !github.event.release.prerelease }}
+    if: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -32,6 +37,59 @@ jobs:
         shell: bash
         env:
           TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag '$TAG' is not vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+          MAJOR="${TAG%%.*}"
+          # The checkout only fetched this tag: the other releases come from the remote.
+          LATEST="$(git ls-remote --tags --refs origin "refs/tags/$MAJOR.*" \
+            | sed 's|.*refs/tags/||' | grep -E "^$MAJOR\.[0-9]+\.[0-9]+\$" \
+            | sort -V | tail -n 1)"
+          if [[ "$LATEST" != "$TAG" ]]; then
+            echo "::notice::$TAG is older than $LATEST: $MAJOR stays where it is."
+            exit 0
+          fi
+          git tag -f "$MAJOR" "$TAG^{commit}"
+          git push -f origin "refs/tags/$MAJOR"
+          echo "::notice::$MAJOR now points to $TAG ($(git rev-parse --short "$TAG^{commit}"))."
+
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create the release from the CHANGELOG entry
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "::error::$TAG already exists."
+            exit 1
+          fi
+          awk -v head="## [$VERSION]" 'index($0, head) == 1 { on = 1; next }
+            on && /^## \[/ { exit } on { print }' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no entry for $VERSION."
+            exit 1
+          fi
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md
+          git fetch --tags origin
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Move the major tag to the release commit
+        # An explicit bash shell runs with -e and -o pipefail: a failed ls-remote fails the
+        # step instead of reading as "no newer release".
+        shell: bash
         run: |
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Release tag '$TAG' is not vMAJOR.MINOR.PATCH."
