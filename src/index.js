@@ -45,6 +45,16 @@ async function writeText(filePath, text) {
   await writeFile(filePath, text, 'utf8');
 }
 
+/**
+ * O fetch global, ou null quando este Node não o tem (anterior ao 18). A falta só é erro
+ * quando a action precisa da API, e aí a mensagem explica a versão necessária.
+ * @returns {typeof fetch|null}
+ */
+function nodeFetch() {
+  const { fetch } = globalThis;
+  return typeof fetch === 'function' ? fetch.bind(globalThis) : null;
+}
+
 /** @type {import('./action/main.js').ActionFileSystem} */
 const fileSystem = {
   readText: (filePath) => readFile(filePath, 'utf8'),
@@ -55,7 +65,8 @@ const fileSystem = {
 
 process.exitCode = await runAction({
   env: process.env,
-  fetch: globalThis.fetch.bind(globalThis),
+  fetch: nodeFetch(),
+  nodeVersion: process.version,
   fs: fileSystem,
   write: (line) => process.stdout.write(`${line}\n`),
   now: () => new Date(),

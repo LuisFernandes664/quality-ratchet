@@ -53,6 +53,9 @@ const LCOV_BASELINE = Object.freeze({
 
 const EN = createTranslator('en');
 
+/** Versão do Node indicada às mensagens nos cenários. */
+const OLD_NODE = 'v16.20.2';
+
 /**
  * @typedef {object} Reply
  * @property {number} [status]
@@ -73,6 +76,7 @@ const EN = createTranslator('en');
  * @property {Partial<typeof realFs>} [fs] substitui operações do sistema de ficheiros
  * @property {(ms: number) => Promise<void>} [sleep] espera entre tentativas (omissão: nenhuma)
  * @property {() => ProxyMode} [proxy] configuração do proxy (omissão: 'none')
+ * @property {null} [fetch] null simula um Node sem fetch (omissão: a API falsa)
  */
 
 /**
@@ -234,7 +238,8 @@ function scenarioEnv(dir, { workspace = '', event, env = {} }) {
 function scenarioDeps(dir, scenario, fetch, lines) {
   return {
     env: scenarioEnv(dir, scenario),
-    fetch,
+    fetch: scenario.fetch === null ? null : fetch,
+    nodeVersion: OLD_NODE,
     fs: { ...realFs, ...scenario.fs },
     write: (line) => { lines.push(line); },
     now: () => NOW,
@@ -642,6 +647,123 @@ describe('runAction: governação do baseline', () => {
     assert.ok(!calls.some((call) => call.route.includes('/contents/')));
     const note = EN('note_base_missing', { path: '../quality-baseline.json' });
     assert.ok(commands(lines, 'warning').includes(`::warning::${note}`));
+  });
+
+  test('sem autorização, o output new-baseline mantém o valor do contrato', async (t) => {
+    const { read } = await runScenario(t, {
+      files: LOWERING, env: WITH_TOKEN, event: pullRequestEvent(), routes: prRoutes(),
+    });
+
+    const newBaseline = JSON.parse(parseOutputs(await read('output.txt'))['new-baseline']);
+    assert.equal(newBaseline.metrics.coverage.value, 80);
+  });
+
+  test('sem autorização, uma medição entre os dois valores não aperta nada', async (t) => {
+    const { read } = await runScenario(t, {
+      files: LOWERING, env: WITH_TOKEN, event: pullRequestEvent(), routes: prRoutes(),
+    });
+
+    assert.equal(parseOutputs(await read('output.txt')).tightened, '[]');
+  });
+});
+
+describe('runAction: source trocada ou retirada no pull request', () => {
+  /** Relatório lcov gerado pelo CI: 50% das linhas cobertas, abaixo dos 80 do contrato. */
+  const HALF_LCOV = 'SF:a.js\nLF:10\nLH:5\nend_of_record\n';
+
+  /** PR que troca a source da cobertura por um ficheiro commitado com 99. */
+  const SWAPPED = Object.freeze({
+    'quality-baseline.json': {
+      version: 2,
+      metrics: {
+        coverage: {
+          value: 80, direction: 'up', source: { format: 'json', path: 'fake.json', pointer: '/v' },
+        },
+      },
+    },
+    'fake.json': { v: 99 },
+    'cov/lcov.info': HALF_LCOV,
+  });
+
+  /** PR que retira a source da cobertura e commita um ficheiro de métricas com 99. */
+  const DROPPED = Object.freeze({
+    'quality-baseline.json': { version: 2, metrics: { coverage: { value: 80, direction: 'up' } } },
+    'metrics-current.json': { coverage: 99 },
+    'cov/lcov.info': HALF_LCOV,
+  });
+
+  /** PR que retira a métrica de cobertura do baseline e passa a seguir só o lint. */
+  const REMOVED = Object.freeze({
+    'quality-baseline.json': { version: 2, metrics: { lint: { value: 10, direction: 'down' } } },
+    'metrics-current.json': { lint: 10 },
+    'cov/lcov.info': HALF_LCOV,
+  });
+
+  /**
+   * Corre um pull request cujo ramo base mede a cobertura pelo lcov.
+   * @param {import('node:test').TestContext} t
+   * @param {Record<string, unknown>} files
+   * @param {string} [title] título do pull request
+   */
+  async function runAgainstLcovBase(t, files, title) {
+    const routes = prRoutes({ base: LCOV_BASELINE, title });
+    const event = pullRequestEvent({ title });
+    const result = await runScenario(t, { files, env: WITH_TOKEN, event, routes });
+    const post = result.calls.find((call) => call.method === 'POST');
+    return { ...result, comment: /** @type {{body: string}} */ (post?.body).body };
+  }
+
+  test('trocar a source sem autorização termina com 1', async (t) => {
+    const { code } = await runAgainstLcovBase(t, SWAPPED);
+
+    assert.equal(code, 1);
+  });
+
+  test('trocar a source sem autorização emite o ::error:: de afrouxamento', async (t) => {
+    const { lines } = await runAgainstLcovBase(t, SWAPPED);
+
+    const message = EN('note_loosen_unauthorised', { names: '`coverage`' });
+    assert.ok(commands(lines, 'error').some((line) => line.startsWith(`::error::${message}`)));
+  });
+
+  test('o comentário mostra a source como campo afrouxado', async (t) => {
+    const { comment } = await runAgainstLcovBase(t, SWAPPED);
+
+    assert.ok(comment.split('\n').includes('| `coverage` | loosened | source |'), comment);
+  });
+
+  test('com a source trocada, a métrica é medida com a source do ramo base', async (t) => {
+    const { read } = await runAgainstLcovBase(t, SWAPPED);
+
+    assert.deepEqual(JSON.parse(parseOutputs(await read('output.txt')).regressions), [
+      { name: 'coverage', status: 'regressed', before: 80, after: 50, delta: -30 },
+    ]);
+  });
+
+  test('trocar a source com título autorizado passa', async (t) => {
+    const { code } = await runAgainstLcovBase(t, SWAPPED, AUTHORISED_TITLE);
+
+    assert.equal(code, 0);
+  });
+
+  test('retirar a source e commitar o ficheiro de métricas termina com 1', async (t) => {
+    const { code } = await runAgainstLcovBase(t, DROPPED);
+
+    assert.equal(code, 1);
+  });
+
+  test('com a source retirada, a regressão usa o relatório do ramo base', async (t) => {
+    const { lines } = await runAgainstLcovBase(t, DROPPED);
+
+    const message = EN('log_regressed', { name: 'coverage', before: 80, after: 50 });
+    assert.ok(commands(lines, 'error').includes(`::error::${message}`));
+  });
+
+  test('com a métrica retirada, a regressão usa o relatório do ramo base', async (t) => {
+    const { lines } = await runAgainstLcovBase(t, REMOVED);
+
+    const message = EN('log_regressed', { name: 'coverage', before: 80, after: 50 });
+    assert.ok(commands(lines, 'error').includes(`::error::${message}`));
   });
 });
 
@@ -1235,5 +1357,44 @@ describe('runAction: proxy', () => {
 
     const message = EN('proxy_invalid', { reason: 'bad url' });
     assert.deepEqual(commands(lines, 'error'), [`::error::${message}`]);
+  });
+});
+
+describe('runAction: Node sem fetch', () => {
+  test('com token termina com 1', async (t) => {
+    const { code } = await runScenario(t, { files: GREEN, env: WITH_TOKEN, fetch: null });
+
+    assert.equal(code, 1);
+  });
+
+  test('com token explica que é preciso o Node.js 20 e a versão em uso', async (t) => {
+    const { lines } = await runScenario(t, { files: GREEN, env: WITH_TOKEN, fetch: null });
+
+    const message = EN('error_node_unsupported', { version: OLD_NODE });
+    assert.deepEqual(commands(lines, 'error'), [`::error::${message}`]);
+  });
+
+  test('a mensagem segue o input language', async (t) => {
+    const env = { ...WITH_TOKEN, INPUT_LANGUAGE: 'pt' };
+
+    const { lines } = await runScenario(t, { files: GREEN, env, fetch: null });
+
+    const message = createTranslator('pt')('error_node_unsupported', { version: OLD_NODE });
+    assert.deepEqual(commands(lines, 'error'), [`::error::${message}`]);
+  });
+
+  test('não configura o proxy', async (t) => {
+    let configured = false;
+    const proxy = () => { configured = true; return /** @type {ProxyMode} */ ('none'); };
+
+    await runScenario(t, { files: GREEN, env: WITH_TOKEN, fetch: null, proxy });
+
+    assert.equal(configured, false);
+  });
+
+  test('sem token não precisa do fetch e segue o gate', async (t) => {
+    const { code } = await runScenario(t, { files: GREEN, fetch: null });
+
+    assert.equal(code, 0);
   });
 });

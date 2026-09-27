@@ -76,7 +76,8 @@ outputs:
   bypassed:
     description: '"true" when a failure was forgiven by the bypass label.'
   summary:
-    description: Markdown summary of every metric compared.
+    description: >-
+      The full Markdown summary (the comment may be shortened to fit GitHub's size limit).
   regressions:
     description: >-
       JSON array of the failing metrics, each with name, status, before, after and delta.

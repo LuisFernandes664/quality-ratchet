@@ -83,7 +83,8 @@ const COMMENT_REDUCTIONS = [
  * Dependências externas da action.
  * @typedef {object} ActionDeps
  * @property {Env} env variáveis de ambiente do runner
- * @property {typeof fetch} fetch
+ * @property {typeof fetch|null} fetch null quando este Node não tem fetch
+ * @property {string} nodeVersion versão do Node que corre a action, para as mensagens
  * @property {ActionFileSystem} fs
  * @property {(line: string) => void} write escreve uma linha no stdout, sem terminador
  * @property {() => Date} now relógio
@@ -197,13 +198,15 @@ function resolvePath(workspace, filePath) {
  * @param {Translator} t
  * @param {ActionInputs} inputs
  * @returns {GitHubClient|null}
- * @throws {ConfigError} proxy_invalid quando a configuração do proxy é recusada
+ * @throws {ConfigError} proxy_invalid quando a configuração do proxy é recusada;
+ *   error_node_unsupported quando este Node não tem fetch
  */
 function createClient(deps, io, t, inputs) {
   if (inputs.token === '') return null;
+  const fetch = requireFetch(deps);
   if (deps.proxy() === 'unsupported') io.warning(t('log_proxy_unsupported'));
   return createGitHubClient({
-    fetch: deps.fetch,
+    fetch,
     apiUrl: deps.env.GITHUB_API_URL || DEFAULT_API_URL,
     token: inputs.token,
     sleep: deps.sleep,
@@ -211,6 +214,19 @@ function createClient(deps, io, t, inputs) {
     onTruncated: (info) => io.warning(t('log_pagination_truncated', { ...info })),
     onRetry: (info) => io.warning(t('log_api_retry', retryParams(info))),
   });
+}
+
+/**
+ * O fetch do Node, necessário para falar com a API. Só falta num Node anterior aos
+ * suportados: nos runners do Gitea e do Forgejo a action corre com o node da imagem do
+ * job, que pode ser antigo.
+ * @param {ActionDeps} deps
+ * @returns {typeof fetch}
+ * @throws {ConfigError} error_node_unsupported quando não há fetch
+ */
+function requireFetch(deps) {
+  if (typeof deps.fetch === 'function') return deps.fetch;
+  throw new ConfigError('error_node_unsupported', { version: deps.nodeVersion });
 }
 
 /**
@@ -232,7 +248,7 @@ async function execute(run) {
   const pr = await readEventPullRequest(run);
   const base = pr ? await loadBaseBaseline(run, pr) : null;
   const context = pr ? await refreshContext(run, pr) : {};
-  const collected = await measure(run, head);
+  const collected = await measure(run, head, base);
   const options = { ...ratchetOptions(run.inputs), frozenAt: isoDate(run.deps.now()) };
   const report = runRatchet({ head, base, ...collected, context, options });
   const summary = renderSummary(report, run.t, { name: run.inputs.name, notes: run.notes });
@@ -244,14 +260,18 @@ async function execute(run) {
 
 /**
  * Reúne as medições: ficheiro de métricas e relatórios das sources, estes relativos à
- * pasta do baseline.
+ * pasta do baseline. Com o baseline do ramo base, as métricas cuja source o PR mudou ou
+ * retirou são medidas também com a source do ramo base, que é a do contrato enquanto a
+ * mudança não for autorizada.
  * @param {ActionRun} run
  * @param {Baseline} head
+ * @param {Baseline|null} base baseline do ramo base (null sem governação)
  * @returns {ReturnType<typeof collectMeasurements>}
  */
-function measure(run, head) {
+function measure(run, head, base) {
   const baselineDir = path.dirname(run.inputs.baseline);
-  return collectMeasurements(run.deps.fs, head, { metricsPath: run.inputs.metrics, baselineDir });
+  const options = { metricsPath: run.inputs.metrics, baselineDir, base };
+  return collectMeasurements(run.deps.fs, head, options);
 }
 
 /**

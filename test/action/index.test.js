@@ -21,6 +21,9 @@ const NATIVE_PROXY = typeof Reflect.get(http, 'setGlobalProxyFromEnv') === 'func
 /** Ponto de entrada da action. */
 const ENTRY = fileURLToPath(new URL('../../src/index.js', import.meta.url));
 
+/** Opções do Node que simulam uma versão sem fetch global (anterior ao 18). */
+const WITHOUT_FETCH = Object.freeze(['--import', 'data:text/javascript,delete globalThis.fetch']);
+
 /** Manifesto da action. */
 const MANIFEST = fileURLToPath(new URL('../../action.yml', import.meta.url));
 
@@ -54,6 +57,7 @@ const PR_EVENT = Object.freeze({
  * @property {Record<string, string>} [inputs] nome do input -> valor
  * @property {(dir: string) => Record<string, string>} [env] variáveis extra, a partir da
  *   pasta da workspace
+ * @property {readonly string[]} [execArgv] opções do Node antes do ponto de entrada
  */
 
 /**
@@ -136,7 +140,7 @@ function defaults(manifest) {
  * @param {import('node:test').TestContext} t
  * @param {EntryScenario} scenario
  */
-async function runEntry(t, { files, inputs = {}, env = () => ({}) }) {
+async function runEntry(t, { files, inputs = {}, env = () => ({}), execArgv = [] }) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'quality-ratchet-entry-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   for (const [name, content] of Object.entries(files)) {
@@ -148,7 +152,7 @@ async function runEntry(t, { files, inputs = {}, env = () => ({}) }) {
     GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md'),
     ...runnerInputs(await readManifest(), inputs),
     ...env(dir),
-  });
+  }, execArgv);
   assert.equal(result.stderr, '');
   const read = (/** @type {string} */ name) => readFile(path.join(dir, name), 'utf8');
   return { ...result, read };
@@ -159,11 +163,13 @@ async function runEntry(t, { files, inputs = {}, env = () => ({}) }) {
  * o processo (ENOENT, maxBuffer) ou uma morte por sinal propagam-se tal como vieram.
  * @param {string} cwd
  * @param {Record<string, string>} env
+ * @param {readonly string[]} execArgv opções do Node antes do ponto de entrada
  * @returns {Promise<{code: number, stdout: string, stderr: string}>}
  */
-async function spawnEntry(cwd, env) {
+async function spawnEntry(cwd, env, execArgv) {
   try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, [ENTRY], { cwd, env });
+    const args = [...execArgv, ENTRY];
+    const { stdout, stderr } = await execFileAsync(process.execPath, args, { cwd, env });
     return { code: 0, stdout, stderr };
   } catch (cause) {
     const failure = /** @type {{code?: unknown, stdout: string, stderr: string}} */ (cause);
@@ -297,6 +303,39 @@ describe('src/index.js', () => {
 
     const written = JSON.parse(await read('out/nested/quality-baseline.json'));
     assert.equal(written.metrics.coverage.value, 90);
+  });
+});
+
+describe('src/index.js: Node sem fetch', () => {
+  test('com token termina com 1', async (t) => {
+    const scenario = { files: GREEN, inputs: { token: 'x' }, execArgv: WITHOUT_FETCH };
+
+    const { code } = await runEntry(t, scenario);
+
+    assert.equal(code, 1);
+  });
+
+  test('com token explica com ::error:: que é preciso o Node.js 20', async (t) => {
+    const scenario = { files: GREEN, inputs: { token: 'x' }, execArgv: WITHOUT_FETCH };
+
+    const { stdout } = await runEntry(t, scenario);
+
+    const errors = stdout.split('\n').filter((line) => line.startsWith('::error::'));
+    assert.ok(errors.some((line) => line.includes('Node.js 20')), stdout);
+  });
+
+  test('com token não deixa um TypeError no log', async (t) => {
+    const scenario = { files: GREEN, inputs: { token: 'x' }, execArgv: WITHOUT_FETCH };
+
+    const { stdout } = await runEntry(t, scenario);
+
+    assert.ok(!stdout.includes('TypeError'), stdout);
+  });
+
+  test('com o token vazio termina com 0', async (t) => {
+    const { code } = await runEntry(t, { files: GREEN, execArgv: WITHOUT_FETCH });
+
+    assert.equal(code, 0);
   });
 });
 
