@@ -1,0 +1,51 @@
+{
+  "version": 2,
+  "frozen_at": "2026-09-27",
+  "metrics": {
+    "coverage_lines": {
+      "value": 68.35,
+      "direction": "up",
+      "tolerance": 0.1,
+      "min": 60,
+      "source": {
+        "format": "cobertura",
+        "path": "reports/coverage/Cobertura.xml"
+      }
+    },
+    "coverage_branches": {
+      "value": 55.1,
+      "direction": "up",
+      "tolerance": 0.1,
+      "source": {
+        "format": "cobertura",
+        "path": "reports/coverage/Cobertura.xml",
+        "field": "branches"
+      }
+    },
+    "mutation_score_covered": {
+      "value": 81.6,
+      "direction": "up",
+      "tolerance": 0.5,
+      "target": 90,
+      "source": {
+        "format": "stryker",
+        "path": "reports/stryker/reports/mutation-report.json",
+        "field": "score_covered"
+      },
+      "description": "Score over covered code only: mutants without tests are left out."
+    },
+    "semgrep_findings": {
+      "value": 14,
+      "direction": "down",
+      "source": {
+        "format": "sarif",
+        "path": "reports/semgrep.sarif",
+        "levels": [
+          "error",
+          "warning"
+        ]
+      },
+      "description": "Semgrep findings of level error and warning; notes are not counted."
+    }
+  }
+}

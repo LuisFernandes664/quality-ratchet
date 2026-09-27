@@ -1,0 +1,74 @@
+# Locks in the improvements that reach main. After each push, the ratchet compares the
+# measurements with the committed baseline; when some metric improved beyond its
+# tolerance, `write-baseline` rewrites quality-baseline.json with the better values and
+# a pull request is opened (or updated) with that single change.
+#
+# Notes:
+# - The lock-in pull request only tightens the baseline, so it needs no special title.
+# - Pull requests opened with the default GITHUB_TOKEN do not trigger other workflows.
+#   If branch protection requires checks on it, pass a GitHub App or fine-grained token
+#   to `token` in the last step.
+# - "Allow GitHub Actions to create and approve pull requests" must be enabled in the
+#   repository (or organisation) settings for the GITHUB_TOKEN to open it.
+# - Open pull requests need no update after a lock-in, as long as their workflow keeps the
+#   default checkout of pull_request (the merge commit, which already has the tightened
+#   baseline). A checkout of the head commit sees the old baseline as loosened: see
+#   "Governance" in the README.
+name: Lock in quality improvements
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: quality-lock-in
+  cancel-in-progress: true
+
+jobs:
+  lock-in:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: Collect reports
+        run: |
+          mkdir -p reports
+          npx jest --coverage --coverageReporters=lcov
+          npx eslint . -f json -o reports/eslint.json || [ $? -eq 1 ]
+
+      - name: Quality ratchet
+        id: ratchet
+        # A regression that reached main (for example a forgiven hotfix) must not stop
+        # the other metrics from being locked in: the new baseline never loosens.
+        continue-on-error: true
+        uses: LuisFernandes664/quality-ratchet@v2
+        with:
+          comment: false
+          write-baseline: quality-baseline.json
+
+      - name: Open the lock-in pull request
+        # Only when the ratchet produced a result. After a configuration error nothing is
+        # written, and running this step with no changes would close an open lock-in
+        # pull request. With a result and nothing left to lock in, closing it is right.
+        if: steps.ratchet.outputs.new-baseline != ''
+        uses: peter-evans/create-pull-request@v8
+        with:
+          add-paths: quality-baseline.json
+          branch: quality-ratchet/lock-in
+          delete-branch: true
+          commit-message: "chore: lock in quality improvements"
+          title: "chore: lock in quality improvements"
+          body: >-
+            Metrics improved beyond their tolerance on main. This pull request tightens
+            the committed baseline so that the gains cannot be lost again. See the job
+            summary of the triggering run for the details.

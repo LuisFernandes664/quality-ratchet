@@ -1,5 +1,5 @@
 name: Quality ratchet
-description: Fails a pull request when any quality metric regresses against a committed baseline. Zero dependencies.
+description: Fails a pull request when a quality metric regresses against a committed baseline.
 author: Luis Fernandes
 
 branding:
@@ -8,38 +8,90 @@ branding:
 
 inputs:
   baseline:
-    description: Path to the committed quality-baseline.json.
+    description: Path to the committed baseline file, relative to the workspace.
     required: false
     default: quality-baseline.json
   metrics:
-    description: Path to the JSON holding the metrics measured in this run.
+    description: >-
+      Path to the flat JSON file with the metrics measured in this run, relative to the
+      workspace. Optional when every metric in the baseline has a source.
     required: false
     default: metrics-current.json
   token:
-    description: Token with pull-requests write permission, used to post the summary comment.
+    description: >-
+      Token used to read the base branch baseline, refresh the pull request title and labels,
+      and post the comment. Leave it empty to skip all API calls (no governance, no comment).
     required: false
     default: ${{ github.token }}
   comment:
-    description: Post or update the summary comment on the pull request.
+    description: Post or update the summary comment on the pull request ("true" or "false").
     required: false
     default: "true"
+  comment-author:
+    description: >-
+      Login of the account that posts the comment (for example my-app[bot]). Only its
+      comments are updated. Empty uses the token's login, or any bot account when the token
+      has none (GITHUB_TOKEN, GitHub Apps).
+    required: false
+    default: ""
+  name:
+    description: >-
+      Name of this ratchet when a repository runs several (for example one per package).
+      Each name gets its own comment and summary title.
+    required: false
+    default: ""
   bypass-label:
-    description: Label that forgives a failure, for production hotfixes.
+    description: Pull request label that forgives a failure, for production hotfixes.
     required: false
     default: hotfix-bypass-ratchet
   lower-baseline-pattern:
-    description: Regex over the pull request title that authorises lowering the baseline.
+    description: >-
+      Regular expression (case-insensitive) that the pull request title must match to loosen
+      the baseline of the base branch.
     required: false
-    default: "^(chore: lower baseline|refactor:)"
+    default: '^chore(\([^)]*\))?: lower baseline'
+  strict:
+    description: >-
+      Fail when a metric improved beyond its tolerance but the committed baseline was not
+      updated ("true" or "false").
+    required: false
+    default: "false"
+  language:
+    description: Language of the summary, comment and logs ("en" or "pt").
+    required: false
+    default: en
+  write-baseline:
+    description: >-
+      Path, relative to the workspace, where the tightened baseline is written when there are
+      improvements to lock in. Missing folders are created. Empty disables writing.
+    required: false
+    default: ""
 
 outputs:
   passed:
-    description: "true when no metric regressed."
+    description: >-
+      "true" when no metric failed, the baseline was not loosened without authorisation and,
+      with strict, every improvement is locked in. Stays "false" when a failure is
+      forgiven.
+  bypassed:
+    description: '"true" when a failure was forgiven by the bypass label.'
   summary:
-    description: Markdown summary of every metric compared.
+    description: >-
+      The full Markdown summary (the comment may be shortened to fit GitHub's size limit).
   regressions:
-    description: JSON array of the metrics that regressed.
+    description: >-
+      JSON array of the failing metrics, each with name, status, before, after and delta.
+  improvements:
+    description: JSON array of the improved metrics, with the same fields as regressions.
+  loosened:
+    description: JSON array with the names of the metrics this pull request loosened.
+  tightened:
+    description: JSON array with the names of the metrics the new baseline tightens.
+  new-baseline:
+    description: >-
+      The baseline with the improvements locked in, as JSON indented with 2 spaces. Commit it
+      to keep the gains.
 
 runs:
-  using: node20
-  main: src/index.mjs
+  using: node24
+  main: src/index.js

@@ -1,0 +1,150 @@
+name: Quality ratchet (reusable)
+
+# Reusable workflow: checks out the caller's repository, sets up the requested
+# toolchains, runs the `collect` command and then the ratchet.
+#
+#   jobs:
+#     ratchet:
+#       uses: LuisFernandes664/quality-ratchet/.github/workflows/quality-ratchet.yml@v2
+#       permissions:
+#         contents: read
+#         pull-requests: write
+#       with:
+#         node-version: "24"
+#         collect: |
+#           npm ci
+#           npx jest --coverage --coverageReporters=lcov
+#
+# The ratchet step below runs LuisFernandes664/quality-ratchet@v2, and the setup actions run
+# by major tag too: pinning this workflow by commit SHA does not pin the action it runs.
+# For a gate pinned end to end, call the action from your own job and pin it by SHA.
+
+on:
+  workflow_call:
+    inputs:
+      baseline:
+        description: Path to the committed baseline, relative to the repository root.
+        type: string
+        default: quality-baseline.json
+      metrics:
+        description: Path to the flat metrics file, if some metrics have no source.
+        type: string
+        default: metrics-current.json
+      collect:
+        description: >-
+          Shell script (bash) that produces the reports and/or the metrics file. Runs from
+          the repository root after checkout and toolchain setup.
+        type: string
+        default: ""
+      node-version:
+        description: Node.js version to set up. Empty skips the setup.
+        type: string
+        default: ""
+      python-version:
+        description: Python version to set up. Empty skips the setup.
+        type: string
+        default: ""
+      dotnet-version:
+        description: .NET SDK version to set up. Empty skips the setup.
+        type: string
+        default: ""
+      name:
+        description: Name of this ratchet, when the repository runs several.
+        type: string
+        default: ""
+      strict:
+        description: Fail when an improvement is not locked into the committed baseline.
+        type: boolean
+        default: false
+      language:
+        description: Language of the summary, comment and logs ("en" or "pt").
+        type: string
+        default: en
+    # Hyphenated names on purpose: repository secrets cannot have a "-", so `secrets:
+    # inherit` never fills these by accident.
+    secrets:
+      collect-env:
+        description: >-
+          NAME=VALUE lines exported only to the collect script (for example a private
+          registry token). Each value is masked in the log.
+        required: false
+      github-token:
+        description: Token for the ratchet step instead of github.token (e.g. a GitHub App's).
+        required: false
+    outputs:
+      passed:
+        description: >-
+          "true" when no metric failed, the baseline was not loosened without authorisation
+          and, with strict, every improvement is locked in. Stays "false" when a failure is
+          forgiven.
+        value: ${{ jobs.ratchet.outputs.passed }}
+      new-baseline:
+        description: The baseline with the improvements locked in.
+        value: ${{ jobs.ratchet.outputs.new-baseline }}
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      passed: ${{ steps.ratchet.outputs.passed }}
+      new-baseline: ${{ steps.ratchet.outputs.new-baseline }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - if: inputs.node-version != ''
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - if: inputs.python-version != ''
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - if: inputs.dotnet-version != ''
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Collect reports
+        if: inputs.collect != ''
+        # An explicit bash shell runs with -e and -o pipefail: a failing command, even one
+        # piped into tee, fails the step instead of producing a partial report. The
+        # collect-env lines are checked, masked and exported before the script runs; a bad
+        # line is reported by its number, never by its content.
+        shell: bash
+        env:
+          COLLECT: ${{ inputs.collect }}
+          COLLECT_ENV: ${{ secrets.collect-env }}
+        run: |
+          number=0
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            number=$((number + 1))
+            line="${line%$'\r'}"
+            [[ -n "$line" ]] || continue
+            if ! [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "::error::collect-env line $number is not NAME=VALUE."
+              exit 1
+            fi
+            value="${line#*=}"
+            if [[ -n "$value" ]]; then
+              echo "::add-mask::${value//%/%25}"
+            fi
+            export "$line"
+          done <<< "$COLLECT_ENV"
+          unset COLLECT_ENV line value number
+          eval "$COLLECT"
+
+      - name: Quality ratchet
+        id: ratchet
+        uses: LuisFernandes664/quality-ratchet@v2
+        with:
+          token: ${{ secrets.github-token || github.token }}
+          baseline: ${{ inputs.baseline }}
+          metrics: ${{ inputs.metrics }}
+          name: ${{ inputs.name }}
+          strict: ${{ inputs.strict }}
+          language: ${{ inputs.language }}

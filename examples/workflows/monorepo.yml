@@ -1,0 +1,51 @@
+# Two ratchets in one repository: one per package, each with its own baseline
+# (packages/api/quality-baseline.json and packages/web/quality-baseline.json).
+#
+# `name` keeps them apart: each ratchet gets its own pull request comment and its own
+# title in the job summary. Every metric in these baselines has a `source`, with paths
+# relative to the package folder (for example "coverage/lcov.info"), so no flat metrics
+# file is needed.
+name: Quality ratchet
+
+on:
+  pull_request:
+    # edited: the title can authorise lowering the baseline.
+    # labeled/unlabeled: the hotfix label forgives a failure.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# One run per pull request: a new event cancels the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ratchet:
+    name: ratchet (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [api, web]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: Collect reports
+        working-directory: packages/${{ matrix.package }}
+        run: |
+          mkdir -p reports
+          npx jest --coverage --coverageReporters=lcov
+          npx eslint . -f json -o reports/eslint.json || [ $? -eq 1 ]
+
+      - uses: LuisFernandes664/quality-ratchet@v2
+        with:
+          name: ${{ matrix.package }}
+          baseline: packages/${{ matrix.package }}/quality-baseline.json

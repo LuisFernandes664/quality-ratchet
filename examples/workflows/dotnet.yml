@@ -1,0 +1,58 @@
+# Quality ratchet for a .NET solution, with examples/baselines/dotnet.json committed as
+# quality-baseline.json at the repository root. Report paths in the baseline are relative
+# to the folder that holds the baseline file.
+#
+# Assumes the test projects reference coverlet.collector (the default in the xunit, nunit
+# and mstest templates) and that tests/App.Tests is the project Stryker mutates.
+name: Quality ratchet
+
+on:
+  pull_request:
+    # edited: the title can authorise lowering the baseline.
+    # labeled/unlabeled: the hotfix label forgives a failure.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# One run per pull request: a new event cancels the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Install tools
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          dotnet tool install --global dotnet-stryker
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          pipx install semgrep
+
+      - name: Coverage
+        run: |
+          dotnet test --collect:"XPlat Code Coverage" --results-directory TestResults
+          # One coverage.cobertura.xml per test project: merge them into
+          # reports/coverage/Cobertura.xml.
+          reportgenerator -reports:"TestResults/**/coverage.cobertura.xml" \
+            -targetdir:reports/coverage -reporttypes:Cobertura
+
+      - name: Mutation testing
+        working-directory: tests/App.Tests
+        # Writes reports/stryker/reports/mutation-report.json.
+        run: |
+          dotnet stryker --reporter json --reporter progress \
+            --output "$GITHUB_WORKSPACE/reports/stryker"
+
+      - name: Static analysis
+        # Semgrep exits with 0 when it finds issues (unless --error is given).
+        run: semgrep scan --config p/csharp --sarif --output reports/semgrep.sarif
+
+      - uses: LuisFernandes664/quality-ratchet@v2

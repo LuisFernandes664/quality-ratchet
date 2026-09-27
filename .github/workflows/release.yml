@@ -1,0 +1,51 @@
+name: Release
+
+# Moves the major tag (for example v2) to the commit of the highest stable vMAJOR.x.y
+# release, so that `uses: LuisFernandes664/quality-ratchet@v2` always runs the latest v2.x.y.
+#
+# - `released` fires when a stable release is published and when a pre-release is promoted
+#   to a release. It never fires for a pre-release, and `published` does not fire again on
+#   a promotion, so it is the only event that sees every release that should move the tag.
+# - A patch for an older minor (for example v2.0.1 after v2.1.0) does not move the tag
+#   back: the tag only moves when the release is the highest vMAJOR.x.y on the remote.
+
+on:
+  release:
+    types: [released]
+
+permissions: {}
+
+jobs:
+  move-major-tag:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Move the major tag to the release commit
+        # An explicit bash shell runs with -e and -o pipefail: a failed ls-remote fails the
+        # step instead of reading as "no newer release".
+        shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag '$TAG' is not vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+          MAJOR="${TAG%%.*}"
+          # The checkout only fetched this tag: the other releases come from the remote.
+          LATEST="$(git ls-remote --tags --refs origin "refs/tags/$MAJOR.*" \
+            | sed 's|.*refs/tags/||' | grep -E "^$MAJOR\.[0-9]+\.[0-9]+\$" \
+            | sort -V | tail -n 1)"
+          if [[ "$LATEST" != "$TAG" ]]; then
+            echo "::notice::$TAG is older than $LATEST: $MAJOR stays where it is."
+            exit 0
+          fi
+          git tag -f "$MAJOR" "$TAG^{commit}"
+          git push -f origin "refs/tags/$MAJOR"
+          echo "::notice::$MAJOR now points to $TAG ($(git rev-parse --short "$TAG^{commit}"))."

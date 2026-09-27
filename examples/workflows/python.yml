@@ -1,0 +1,45 @@
+# Quality ratchet for a Python project, with examples/baselines/python.json committed as
+# quality-baseline.json at the repository root. Report paths in the baseline are relative
+# to the folder that holds the baseline file.
+name: Quality ratchet
+
+on:
+  pull_request:
+    # edited: the title can authorise lowering the baseline.
+    # labeled/unlabeled: the hotfix label forgives a failure.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# One run per pull request: a new event cancels the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -r requirements.txt pytest coverage ruff pip-audit
+
+      - name: Collect reports
+        run: |
+          mkdir -p reports
+          # coverage.xml (Cobertura) and reports/junit.xml. --branch is needed for the
+          # coverage_branches metric: without it the report has no branches to measure.
+          coverage run --branch -m pytest --junitxml=reports/junit.xml
+          coverage xml -o coverage.xml
+          # --exit-zero: violations are counted by the ratchet, not failed by ruff.
+          ruff check --exit-zero --output-format sarif -o reports/ruff.sarif .
+          # pip-audit exits with 1 when it finds vulnerabilities. A report that is missing
+          # or not valid JSON makes the metric fail in the ratchet, so nothing is hidden.
+          pip-audit -r requirements.txt -f json -o reports/pip-audit.json || true
+
+      - uses: LuisFernandes664/quality-ratchet@v2
