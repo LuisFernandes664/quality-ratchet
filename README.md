@@ -69,6 +69,10 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   ratchet:
     runs-on: ubuntu-latest
@@ -97,6 +101,10 @@ or removed. Without them, fixing the title or adding the label leaves the red ch
 place until the next push or a manual re-run. A re-run replays the original event, with
 the title and labels the pull request had back then, so the action does not trust the
 event: it reads the current title and labels from the API on every run.
+
+Each of those events starts a run, so `concurrency` keeps one run per pull request: a new
+event (a push, a new title, a label) cancels the run in progress, whose result would be
+out of date anyway, and two runs never race to post the comment.
 
 **Permissions.** `contents: read` is needed to check out the code and to read the
 baseline on the base branch. `pull-requests: write` is needed to post the summary
@@ -144,9 +152,22 @@ goes to the job summary, and each failure to the log as an annotation:
 | ⚠️ | invalid: the measured value is not a number | yes |
 | ⛔ | outside the absolute `min` / `max` | yes |
 
+Numbers are shown with up to 4 decimal places, or with more when a baseline and a
+measured value would otherwise look the same (`0.81234` and `0.81231`). A green run reads
+"Ratchet green. No metric regressed beyond its tolerance."
+
 The comment also lists every change the pull request makes to the baseline, explains any
 authorisation or forgiven failure, and ends with the baseline updated with the
-improvements, ready to copy.
+improvements, ready to copy. When `lower-baseline-pattern` is empty, the note on a
+loosened baseline says that loosening is turned off, instead of asking for a title.
+
+Only comments posted by the account that publishes the ratchet are updated (see the
+`comment-author` input): a comment by anyone else that starts with the same hidden marker
+is ignored, never edited. If simultaneous runs created more than one comment, all of them
+are updated. A comment is limited to 65536 characters: a longer summary is shortened for
+the comment, with a note saying so (the updated baseline goes first, then the untracked
+metrics, the baseline changes that do not loosen it and the rows that need no attention).
+The job summary and the `summary` output always have the full report.
 
 On a push (no pull request) the ratchet compares the measurements with the committed
 baseline and reports in the job summary and the outputs, without a comment.
@@ -198,7 +219,11 @@ At the root, `$schema` is optional and only helps editors, `version: 2` names th
 and `frozen_at` records when the values were last frozen (the tools update it).
 
 The baseline is validated before anything runs, and every problem is reported at once.
-Unknown fields are warnings, so a typo such as `tolerence` does not pass unnoticed.
+`description` and `$schema` must be text, and a metric name needs visible text, with no
+line breaks or other control characters. Unknown fields, including keys inside `source`,
+are warnings, so a typo such as `tolerence` or `feild` does not pass unnoticed. The tools
+that rewrite the file keep unknown fields where they were, so the warning repeats until
+the typo is fixed.
 
 The tools that write the baseline (`update`, `init`, `migrate` and the `write-baseline`
 input) write JSON indented with 2 spaces, with the fields in the order of the table above.
@@ -247,8 +272,11 @@ The original format still works, and files are rewritten in the format they were
 ```
 
 Version 1 has no tolerance, limits or sources, and its values always come from the flat
-metrics file. Convert it with `npx github:LuisFernandes664/quality-ratchet#v2 migrate`.
-Values without a rule (never checked) cannot be migrated: they are dropped with a warning.
+metrics file. A version 1 file rewritten by the tools keeps `version: 1` when it declared
+it, the original order of the values, and the values without a rule, numbers or not.
+Convert it with `npx github:LuisFernandes664/quality-ratchet#v2 migrate`. Values without
+a rule (never checked), numbers or not, cannot be migrated: they are all dropped, and the
+warning names each one.
 
 ## Sources: reading reports directly
 
@@ -259,16 +287,16 @@ used. Percentages are between 0 and 100 and are not rounded.
 
 | `format` | Fields (default first) | What is read | Produced by, for example |
 |---|---|---|---|
-| `lcov` | `lines`, `branches`, `functions` | LH/LF, BRH/BRF and FNH/FNF summed over all records, as a percentage | `node --test --experimental-test-coverage --test-reporter=lcov`, Jest, Vitest, c8, nyc |
-| `istanbul` | `lines`, `statements`, `functions`, `branches` | `total.<field>.pct` of `coverage-summary.json` | the `json-summary` reporter of nyc, c8, Jest, Vitest |
-| `cobertura` | `lines`, `branches` | `line-rate` / `branch-rate` of the root `<coverage>`, as a percentage | `coverage xml` (coverage.py), coverlet, ReportGenerator |
+| `lcov` | `lines`, `branches`, `functions` | LH/LF, BRH/BRF and FNH/FNF per source file, summed over files, as a percentage. Several records of the same file (one per test name from `lcov -a`, or repeated by concatenating reports) are merged as the union of their DA/BRDA/FNDA lines, as `lcov --summary` and genhtml report; records with the same `SF:` but different lines (relative paths from two packages) count as different files | `node --test --experimental-test-coverage --test-reporter=lcov`, Jest, Vitest, c8, nyc, lcov/geninfo (gcc, clang), gcovr |
+| `istanbul` | `lines`, `statements`, `functions`, `branches` | `total.<field>.covered` / `total.<field>.total` of `coverage-summary.json`, as a percentage (`pct`, which istanbul truncates to 2 decimals, only when the counts are missing) | the `json-summary` reporter of nyc, c8, Jest, Vitest |
+| `cobertura` | `lines`, `branches` | `lines-covered` / `lines-valid` and `branches-covered` / `branches-valid` of the root `<coverage>`, as a percentage; `line-rate` / `branch-rate` (rounded by the tools) only when the counts are missing | `coverage xml` (coverage.py), coverlet, ReportGenerator |
 | `stryker` | `score`, `score_covered`, `killed`, `survived`, `no_coverage`, `timeout` | mutants by status (mutation-testing-report-schema). `score` = detected / (detected + survived + no coverage); `score_covered` leaves out mutants without coverage. Detected = killed + timeout | StrykerJS (`json` reporter), Stryker.NET |
-| `sarif` | `count` | results of all runs, except suppressed ones and those the tool's own baseline marks `absent`. Optional `levels` (`error`, `warning`, `note`, `none`); a result without a `level` takes its rule's default level, or `warning` | ruff, Semgrep, CodeQL, ESLint SARIF formatter |
+| `sarif` | `count` | results of all runs, except suppressed ones and those the tool's own baseline marks `absent`. Optional `levels` (`error`, `warning`, `note`, `none`); a result without a `level` takes its rule's default level, or `warning`. SARIF 2.1.0 only: other versions are rejected (`dotnet build` writes 1.0.0 by default: use `-p:ErrorLog=build.sarif%2Cversion=2.1`). A run whose `invocations` report `executionSuccessful: false` (an ESLint parsing error, missing classes in SpotBugs) is rejected instead of giving a partial count | ruff, Semgrep, CodeQL, ESLint SARIF formatter |
 | `eslint` | `total`, `errors`, `warnings` | `errorCount` / `warningCount` summed over all files | `eslint -f json` |
 | `jscpd` | `percentage`, `clones`, `duplicated_lines` | `statistics.total` | `jscpd --reporters json` |
 | `npm-audit` | `total`, `critical`, `high`, `moderate`, `low`, `info`, `high+`, `moderate+`, `low+` | `metadata.vulnerabilities`. `high+` is high plus critical, and so on | `npm audit --json` (npm 6 and later) |
-| `pip-audit` | `count` | vulnerabilities of all dependencies | `pip-audit -f json` |
-| `junit` | `tests`, `failures`, `errors`, `skipped` | number of `<testcase>`, `<failure>`, `<error>` and `<skipped>` elements | pytest `--junitxml`, jest-junit; Maven Surefire and Gradle once merged ([below](#one-report-per-class-or-project)) |
+| `pip-audit` | `count` | distinct vulnerabilities per dependency (entries that share an `id` or an alias count once), summed over all dependencies; a project with no dependencies counts 0 | `pip-audit -f json` |
+| `junit` | `tests`, `failures`, `errors`, `skipped` | `tests` / `skipped`: number of `<testcase>` / `<skipped>` elements; `failures` / `errors`: number of `<testcase>` with at least one `<failure>` / `<error>` (several in one test, as Vitest and jest-junit write them, count once) | pytest `--junitxml`, jest-junit, Vitest; Maven Surefire and Gradle once merged ([below](#one-report-per-class-or-project)) |
 | `json` | `value` | the value at `pointer` (JSON Pointer, RFC 6901, required): a number, a numeric string, or an array (its length) | any tool with JSON output |
 
 Two formats take options:
@@ -324,13 +352,18 @@ the pull request's base commit:
 - **Tightening is free.** A better value, a smaller tolerance, a higher `min`, a lower
   `max`, a new limit or a new metric: no permission needed.
 - **Loosening needs authorisation.** A worse value, a larger tolerance, a lower or
-  removed `min`, a higher or removed `max`, a changed direction or a removed metric is
-  only accepted when the pull request title matches `lower-baseline-pattern` (default
-  `^chore(\([^)]*\))?: lower baseline`, case-insensitive). For example
-  `chore: lower baseline after dropping the legacy importer`.
+  removed `min`, a higher or removed `max`, a changed direction, a removed metric, or a
+  `source` changed, added or removed (`format`, `path`, `field`, `pointer`, `levels`;
+  writing out the default `field` also counts) is only accepted when the pull request
+  title matches `lower-baseline-pattern` (default `^chore(\([^)]*\))?: lower baseline`,
+  case-insensitive). For example `chore: lower baseline after dropping the legacy
+  importer`. Moving a report to another path, or moving a metric from the metrics file to
+  a source, needs that title too.
 - **Without authorisation** the run fails, and the metrics are still checked against the
-  stricter version of each field. Removed metrics keep being checked. A pull request
-  cannot hide a regression by editing the baseline next to it.
+  stricter version of each field. Removed metrics keep being checked, and both they and
+  the metrics whose source changed are measured as the base branch says: with its source,
+  or from the metrics file when it had none. A pull request cannot hide a regression by
+  editing the baseline next to it.
 - **The title authorises, it does not forgive.** With an authorised title, the pull
   request's baseline becomes the contract, and anything that regresses against it still
   fails.
@@ -338,18 +371,37 @@ the pull request's base commit:
   `hotfix-bypass-ratchet`, compared case-insensitively) passes whatever failed. The
   output `passed` stays `false` and `bypassed` becomes `true`.
 
+Only `target` and `description` never loosen the baseline: they are informative, and a
+change to them is listed as `changed`.
+
 The baseline the pull request proposes is the file in the workspace, so keep the default
 checkout of the `pull_request` event: the merge commit `refs/pull/<n>/merge`, which
 already contains the base branch. If the workflow checks out
 `github.event.pull_request.head.sha` (or `github.head_ref`), a branch that is behind shows
 an old baseline. A value that the base branch tightened since (with a lock-in pull
 request, for example) then looks loosened, and the run fails although the pull request
-never touched the file. If you need that checkout, update the branch (merge or rebase)
-before the ratchet runs.
+never touched the file; the summary reminds you to check the checkout whenever it finds
+loosening without authorisation. If you need that checkout, update the branch (merge or
+rebase) before the ratchet runs.
+
+The file read on the base branch is the baseline's path relative to the root of the
+checkout: the nearest folder with a `.git`, going up from the baseline's folder to the
+workspace, or the workspace itself when there is none. So a repository checked out into a
+subfolder with `actions/checkout` and `path:` is governed too:
+
+```yaml
+      - uses: actions/checkout@v7
+        with:
+          path: app
+      # ... collect the reports inside app/
+      - uses: LuisFernandes664/quality-ratchet@v2
+        with:
+          baseline: app/quality-baseline.json
+```
 
 Nothing is silent. The comment states when a failure was forgiven and why, when the
 baseline was loosened with authorisation, and lists every change the pull request makes
-to the baseline (loosened, tightened, added, removed, with the fields involved).
+to the baseline (loosened, tightened, changed, added, removed, with the fields involved).
 
 Governance needs a pull request, so it does not apply on other events (a push, a
 schedule). On a pull request it is off, with a note in the summary and a warning in the
@@ -361,13 +413,15 @@ log, when:
 - there is no token.
 
 API errors while reading the base baseline fail the run: governance is a safety check and
-is never switched off in silence.
+is never switched off in silence. Transient errors (network, 500, 502, 503 and 504, 429
+or an exhausted rate limit) are tried up to 3 times in all, honouring `retry-after` (or
+the rate limit reset) when it asks for 30 s or less; after that the run fails. Posting a
+new comment is never repeated, so that it cannot be duplicated.
 
-Changes to `target`, `description` or `source` are not treated as loosening. Protect the
-file with CODEOWNERS, and require code owner reviews in branch protection, so that every
-baseline change is reviewed by the people who own quality. Protect the workflows too: a
-pull request that points `baseline` at a new file, or removes the step, is not governed
-by the baseline at all.
+Protect the file with CODEOWNERS, and require code owner reviews in branch protection, so
+that every baseline change, `target` and `description` included, is reviewed by the
+people who own quality. Protect the workflows too: a pull request that points `baseline`
+at a new file, or removes the step, is not governed by the baseline at all.
 
 ```
 # .github/CODEOWNERS
@@ -382,7 +436,10 @@ baseline stays at 7, the next pull request can drop back to 7.1 and still pass.
 
 Every run computes the baseline with the improvements locked in: the metrics that got
 better by more than their tolerance take the measured value, and `frozen_at` becomes the
-date of the run. It is kept in the format of the committed file (v1 stays v1). Three ways
+date of the run. It is kept in the format of the committed file (v1 stays v1). On a
+governed pull request that loosens the baseline without authorisation, it starts from the
+effective contract (the stricter version of each field, as the check used) rather than
+from the pull request's file, so copying it never carries the loosening along. Three ways
 to use it:
 
 - **Copy it.** It is in the comment (collapsed) and in the `new-baseline` output.
@@ -441,6 +498,24 @@ job summary, in the outputs and in the check status, and the gate decides exactl
 would with a comment. Do not switch to `pull_request_target` to get a write token: the
 collect step runs the fork's code (its tests), and it would run with write access.
 
+## Self-hosted runners, GHES and proxies
+
+On GitHub Enterprise Server the runner sets `GITHUB_API_URL` to the server's API, and the
+action calls that URL: there is nothing to configure.
+
+Behind a proxy, the `fetch` of Node.js ignores `HTTPS_PROXY` and `HTTP_PROXY` unless it is
+told otherwise. When the Node.js that runs the action has `http.setGlobalProxyFromEnv`
+(recent Node.js 24 releases), the action applies `HTTPS_PROXY`, `HTTP_PROXY` and
+`NO_PROXY` by itself. On other versions it logs a warning and the API requests go direct;
+if they fail, set `NODE_USE_ENV_PROXY` on the step so that Node.js routes them through the
+proxy (recent Node.js 22 and 24 releases; Node.js 20 cannot):
+
+```yaml
+      - uses: LuisFernandes664/quality-ratchet@v2
+        env:
+          NODE_USE_ENV_PROXY: "1"
+```
+
 ## Inputs
 
 | Input | Default | Description |
@@ -469,7 +544,7 @@ fall back to their default when empty.
 |---|---|
 | `passed` | `true` when no metric failed, the baseline was not loosened without authorisation and, with `strict`, every improvement is locked in. Stays `false` when a failure is forgiven. |
 | `bypassed` | `true` when the hotfix label forgave a failure. |
-| `summary` | The Markdown summary, as in the comment. |
+| `summary` | The full Markdown summary (the comment may be shortened to fit GitHub's size limit). |
 | `regressions` | JSON array of the failing metrics: `{name, status, before, after, delta}`, with status `regressed`, `missing`, `invalid` or `limit`. |
 | `improvements` | JSON array of the improved metrics, same shape. |
 | `loosened` | JSON array with the names of the metrics this pull request loosened. |
@@ -545,7 +620,11 @@ commit SHA instead, as described in [Versions](#versions).
 
 Once the package is published to npm, `npx quality-ratchet@2 check` does the same. Every
 command accepts `--language en|pt`, `-h`/`--help` and `-v`/`--version`. Paths are
-relative to the current directory, and the defaults are the action's.
+relative to the current directory, and the defaults are the action's. The path options
+(`--baseline`, `--metrics`, `--output`, `--write-baseline`) and `--base-ref` do not accept
+an empty value, or one with only spaces: the command exits with code 2 and
+`"--<option>" is required`, instead of reading the working directory or ignoring the
+option.
 
 ### `check` (default command)
 
@@ -565,7 +644,16 @@ The contract is the baseline at `--base-ref`, and the baseline the branch propos
 file in the working directory. Use the merge base, not the tip of the target branch: a
 branch that is behind would otherwise be blamed for every tightening made on the target
 since, reported as loosening and as regressions. The tip is right only when the working
-directory already contains it (a merge with the target, or a rebased branch).
+directory already contains it (a merge with the target, or a rebased branch). When `check`
+finds loosening without authorisation, the summary and the error remind you to check that
+`--base-ref` is the merge base.
+
+As in the action, governance is off, with a warning and a note in the summary, when the
+baseline does not exist at `--base-ref` (the branch that adds it) or is invalid there. A
+baseline path outside the repository is treated like a missing baseline, as in the
+action. Git errors while reading the baseline at `--base-ref`, other than the file not
+existing at that ref (for example a missing object in a partial clone whose remote is
+unreachable), fail with exit code 2; governance is not switched off.
 
 | Option | Description |
 |---|---|
@@ -582,9 +670,12 @@ directory already contains it (a merge with the target, or a rebased branch).
 | `--write-baseline <path>` | Write the tightened baseline to this file when something improved. |
 
 The JSON output has `passed`, `ok` (passed or forgiven), `bypassed`, `results`, `failures`,
-`loosened`, `tightened` and `newBaseline`. Use the `--title=<text>` form for titles that
-come from a variable: with `--title <text>`, a title that starts with `-` is rejected as
-an ambiguous option and the command exits with code 2.
+`loosened`, `tightened` and `newBaseline`. The reason of a failing result is a message
+code with its parameters (`detail: {code, params}`), not text; the reason a report could
+not be read, in `detail.params.reason`, is also `{code, params}`, except the text of a
+JSON syntax error. Use the `--title=<text>` form for titles that come from a variable:
+with `--title <text>`, a title that starts with `-` is rejected as an ambiguous option and
+the command exits with code 2.
 
 ### `update`
 
@@ -594,9 +685,12 @@ Tightens the baseline file with the measured improvements, and fills in `null` v
 npx github:LuisFernandes664/quality-ratchet#v2 update
 ```
 
-`--allow-lower` re-freezes every value, regressions included, for a pull request that is
-authorised to lower the baseline. `--output <path>` writes elsewhere (default: the
-baseline itself). When nothing changes, the file is left untouched.
+Without `--allow-lower`, a regression never lowers the baseline: the command lists the
+values it did not lower in a warning on stderr, and `check` keeps failing until they
+recover. `--allow-lower` re-freezes every value, regressions included, for a pull request
+that is authorised to lower the baseline; when the values already match, it says that the
+baseline already matches the measurements. `--output <path>` writes elsewhere (default:
+the baseline itself). When nothing changes, the file is left untouched.
 
 ### `init`
 
@@ -609,9 +703,11 @@ npx github:LuisFernandes664/quality-ratchet#v2 init \
   --down lint_violations_total,duplication_pct
 ```
 
-Only the listed metrics enter the baseline (the others are named in a warning). It
-refuses to overwrite an existing file unless `--force` is given. Add `source`, `tolerance`
-and limits by hand afterwards.
+`--metrics` is required here. `--up` and `--down` name the metrics that may only go up or
+down, separated by commas (each option can also be repeated). Only the listed metrics
+enter the baseline (the others are named in a warning). It writes
+`quality-baseline.json`, or `--output <path>`, and refuses to overwrite an existing file
+unless `--force` is given. Add `source`, `tolerance` and limits by hand afterwards.
 
 ### `migrate`
 
@@ -677,8 +773,14 @@ the base64 responses of their contents API.
 The runner must accept `runs.using: node24`, but it does not pick the Node.js version
 from it: the action runs with the `node` of the job's container image, so that image
 needs Node.js 20 or later. Older runner configurations map their default labels to
-`node:16-bullseye`, where the action fails. Map the label in `runs-on` to an image with
-Node.js 20 or later (for example `node:24-bookworm`).
+`node:16-bullseye`, where the action fails with a message that asks for Node.js 20 or
+later. Map the label in `runs-on` to an image with Node.js 20 or later (for example
+`node:24-bookworm`).
+
+If the comment is not updated in place (a new one appears on every run), set
+`comment-author` to the login of the Actions user that posts it (for example
+`gitea-actions`). Without it, the action only updates comments by the token's login or,
+when it cannot learn that login from the token, by `[bot]` accounts.
 
 Depending on the instance, `uses:` may need the full URL
 (`https://github.com/LuisFernandes664/quality-ratchet@v2`). This setup is not tested in

@@ -63,9 +63,16 @@ const FULL_ROOT = Object.freeze({
   metrics: { exemplo: FULL_METRIC },
 });
 
+/** Nomes de métrica que o núcleo aceita: texto visível, sem caracteres de controlo. */
+const VALID_NAMES = ['a', 'coverage lines', ' a ', 'ç', 'a\u2028b', '\u2028a', 'a\u0085b'];
+
+/** Nomes de métrica que o núcleo recusa: vazios, só espaços, ou com caracteres de controlo. */
+const INVALID_NAMES = ['', ' ', '\t', '\u00a0', '\ufeff', 'a\nb', 'a\rb', 'a\u0000b', 'a\u007fb'];
+
 /**
  * @typedef {object} SchemaNode
  * @property {Record<string, SchemaNode>} [properties]
+ * @property {{pattern?: string}} [propertyNames]
  * @property {unknown[]} [enum]
  * @property {unknown} [const]
  * @property {string} [$id]
@@ -158,6 +165,34 @@ function schemaFieldsByFormat(source) {
  */
 function propertyNames(node) {
   return Object.keys(node.properties ?? {}).sort();
+}
+
+/**
+ * Indica se o núcleo aceita um nome de métrica num baseline v2.
+ * @param {string} name
+ * @returns {boolean}
+ */
+function coreAcceptsName(name) {
+  try {
+    parseBaseline({ version: 2, metrics: { [name]: { value: 1, direction: 'up' } } });
+    return true;
+  } catch (error) {
+    const issues = /** @type {{params?: {issues?: Array<{code: string}>}}} */ (error).params;
+    if (issues?.issues?.some((issue) => issue.code === 'metric_name_invalid')) return false;
+    throw error;
+  }
+}
+
+/**
+ * Indica se o padrão dos nomes de métrica do schema aceita um nome.
+ * @param {string} name
+ * @returns {Promise<boolean>}
+ */
+async function schemaAcceptsName(name) {
+  const { schema } = await loadSchema();
+  const pattern = schema.properties?.metrics.propertyNames?.pattern;
+  assert.ok(pattern, 'metrics.propertyNames.pattern em falta no schema');
+  return new RegExp(pattern, 'u').test(name);
 }
 
 /**
@@ -278,6 +313,22 @@ describe('schema do baseline v2', () => {
     const { metric } = await loadSchema();
 
     assert.deepEqual(metric.required, ['value', 'direction']);
+  });
+
+  test('os nomes que o nucleo aceita passam no padrao do schema', async () => {
+    const schema = await Promise.all(VALID_NAMES.map(schemaAcceptsName));
+    const core = VALID_NAMES.map(coreAcceptsName);
+    const all = VALID_NAMES.map(() => true);
+
+    assert.deepEqual({ core, schema }, { core: all, schema: all });
+  });
+
+  test('os nomes que o nucleo recusa falham no padrao do schema', async () => {
+    const schema = await Promise.all(INVALID_NAMES.map(schemaAcceptsName));
+    const core = INVALID_NAMES.map(coreAcceptsName);
+    const none = INVALID_NAMES.map(() => false);
+
+    assert.deepEqual({ core, schema }, { core: none, schema: none });
   });
 
   test('o formato json exige pointer', async () => {

@@ -12,7 +12,7 @@
     },
     "version": {
       "const": 2,
-      "description": "Format version. A file whose metrics are all objects is read as v2."
+      "description": "Format version. Without it, metrics that are all objects are read as v2."
     },
     "frozen_at": {
       "type": "string",
@@ -23,6 +23,10 @@
       "type": "object",
       "description": "One entry per metric, keyed by metric name.",
       "minProperties": 1,
+      "propertyNames": {
+        "description": "Visible text, without line breaks or other control characters.",
+        "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\s\\x00-\\x1f\\x7f][^\\x00-\\x1f\\x7f]*$"
+      },
       "additionalProperties": { "$ref": "#/definitions/metric" }
     }
   },

@@ -17,6 +17,11 @@ permissions:
   contents: read
   pull-requests: write
 
+# One run per pull request: a new event cancels the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   ratchet:
     name: ratchet (${{ matrix.package }})
