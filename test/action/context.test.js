@@ -17,6 +17,7 @@ const EXPECTED = {
   title: 'refactor: simplificar',
   labels: ['hotfix-bypass-ratchet'],
   baseSha: 'base123',
+  mergeBase: '',
   headSha: 'head456',
   baseRepo: 'dono/projecto',
   headRepo: 'fork/projecto',
@@ -31,6 +32,11 @@ describe('readPullRequestFromEvent', () => {
   test('lê o pull request de um evento pull_request_target', () => {
     const event = { action: 'opened', pull_request: PULL_REQUEST, repository: { id: 1 } };
     assert.deepEqual(readPullRequestFromEvent(event), EXPECTED);
+  });
+
+  test('lê a merge_base do payload do Gitea e do Forgejo', () => {
+    const event = { action: 'opened', pull_request: { ...PULL_REQUEST, merge_base: 'mb789' } };
+    assert.equal(readPullRequestFromEvent(event)?.mergeBase, 'mb789');
   });
 
   test('devolve null quando o payload não tem pull_request (ex: push)', () => {

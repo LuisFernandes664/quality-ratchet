@@ -53,6 +53,9 @@ const READ_ONLY_STATUSES = new Set([403, 404]);
 const QUIET_STATUSES = new Set([Status.IMPROVED, Status.UNCHANGED]);
 
 /** Nota que acompanha um comentário abreviado para caber no limite da API. */
+/** Utilizador em nome do qual o Gitea Actions publica com o token do workflow. */
+const GITEA_ACTIONS_USER = 'gitea-actions';
+
 const ABBREVIATED_NOTE = Object.freeze({ code: 'note_comment_abbreviated', params: {} });
 
 /**
@@ -103,6 +106,7 @@ const COMMENT_REDUCTIONS = [
  * @property {string} token
  * @property {boolean} comment
  * @property {string} commentAuthor login dos comentários a actualizar ('' descobre-o)
+ * @property {string} baseRef referência do contrato ('' usa a merge base ou base.sha)
  * @property {string} name
  * @property {string} bypassLabel
  * @property {string} lowerBaselinePattern
@@ -171,6 +175,7 @@ function readInputs(env) {
     token: readInput(env, 'token'),
     comment: readBooleanInput(env, 'comment', true),
     commentAuthor: readInput(env, 'comment-author'),
+    baseRef: readInput(env, 'base-ref'),
     name: readInput(env, 'name'),
     bypassLabel: readOptionalInput(env, 'bypass-label', DEFAULTS.bypassLabel),
     lowerBaselinePattern: readOptionalInput(env, 'lower-baseline-pattern', DEFAULTS.lowerPattern),
@@ -305,9 +310,34 @@ async function loadBaseBaseline(run, pr) {
   const repoPath = repositoryPath(await checkoutRoot(run), run.inputs.baseline);
   const text = repoPath.startsWith('../')
     ? null
-    : await run.client.getFileAtRef(requireRepository(run.deps.env), repoPath, pr.baseSha);
+    : await readContract(run, run.client, repoPath, pr);
   if (text === null) return withNote(run, 'note_base_missing', { path: repoPath });
   return parseBaseBaseline(run, text, repoPath);
+}
+
+/**
+ * Conteúdo do baseline na referência do contrato, ou null quando não existe lá.
+ * @param {ActionRun} run
+ * @param {GitHubClient} client
+ * @param {string} repoPath caminho do baseline no repositório
+ * @param {PullRequestInfo} pr
+ * @returns {Promise<string|null>}
+ */
+function readContract(run, client, repoPath, pr) {
+  const repo = requireRepository(run.deps.env);
+  return client.getFileAtRef(repo, repoPath, contractRef(run, pr));
+}
+
+/**
+ * Referência onde se lê o contrato: o input base-ref, a merge base quando o servidor a
+ * indica (Gitea e Forgejo, onde `base.sha` é a ponta actual do ramo base e não o ponto de
+ * onde o ramo saiu) ou, no GitHub, `base.sha`.
+ * @param {ActionRun} run
+ * @param {PullRequestInfo} pr
+ * @returns {string}
+ */
+function contractRef(run, pr) {
+  return run.inputs.baseRef || pr.mergeBase || pr.baseSha;
 }
 
 /**
@@ -536,9 +566,8 @@ async function publishComment(run, pr, report, summary) {
 }
 
 /**
- * Pedido de upsert do comentário. O autor é o input comment-author ou, sem ele, o login do
- * token; quando o token não tem login (GITHUB_TOKEN, GitHub Apps), null aceita só contas
- * de bot. Comentários de outras pessoas com o mesmo marcador nunca são alvo.
+ * Pedido de upsert do comentário, com o autor dado por commentAuthor. Comentários de outras
+ * pessoas com o mesmo marcador nunca são alvo.
  * @param {ActionRun} run
  * @param {GitHubClient} client
  * @param {PullRequestInfo} pr
@@ -550,9 +579,25 @@ async function commentRequest(run, client, pr, body) {
     repo: requireRepository(run.deps.env),
     number: pr.number,
     marker: commentMarker(run.inputs.name),
-    author: run.inputs.commentAuthor || await client.getAuthenticatedLogin(),
+    author: await commentAuthor(run, client),
     body,
   };
+}
+
+/**
+ * Autor dos comentários a actualizar: o input comment-author ou o login do token. No Gitea
+ * Actions o token do workflow não revela o login (GET /user é recusado) e os comentários
+ * saem em nome de `gitea-actions`, que não termina em `[bot]`: sem este caso, cada
+ * execução publicaria um comentário novo.
+ * @param {ActionRun} run
+ * @param {GitHubClient} client
+ * @returns {Promise<string|null>} null aceita só contas de bot
+ */
+async function commentAuthor(run, client) {
+  if (run.inputs.commentAuthor) return run.inputs.commentAuthor;
+  const login = await client.getAuthenticatedLogin();
+  if (login !== null) return login;
+  return run.deps.env.GITEA_ACTIONS === 'true' ? GITEA_ACTIONS_USER : null;
 }
 
 /**

@@ -7,10 +7,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-29
+
 ### Added
 
+- `base-ref` input: the ref where the contract is read, overriding the merge base or the
+  base commit of the pull request (#3).
 - The Release workflow can be run by hand on `main` to publish the release of the version
   in `package.json`, with its changelog entry as notes, and move the major tag.
+
+### Fixed
+
+- On Gitea Actions the summary comment is updated in place instead of a new one on every
+  run: without `comment-author` and without a login from the token, the comments of
+  `gitea-actions` are updated (#4).
+- The test suite passes on Windows: `.gitattributes` keeps LF line endings with
+  `core.autocrlf=true`, the path fakes of the git tests are platform neutral, and CI runs
+  the tests on `windows-latest` (#11).
+- On Gitea and Forgejo the contract is read at the pull request's `merge_base` instead of
+  `base.sha`, which is the current tip of the base branch there: a branch that is behind
+  is no longer reported as loosening what the base branch tightened later (#3).
 
 ## [2.0.0] - 2026-09-27
 
@@ -205,6 +221,7 @@ First release, published as the `v1.0.0` and `v1` tags.
 - The `bypass-label` (default `hotfix-bypass-ratchet`) and a title matching
   `lower-baseline-pattern` (default `^(chore: lower baseline|refactor:)`) forgive a failure.
 
-[Unreleased]: https://github.com/LuisFernandes664/quality-ratchet/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/LuisFernandes664/quality-ratchet/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.1.0
 [2.0.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.0.0
 [1.0.0]: https://github.com/LuisFernandes664/quality-ratchet/tree/v1.0.0

@@ -256,18 +256,24 @@ function fakeRunner(replies = {}) {
 }
 
 /**
- * Caminho real falso: troca os caminhos indicados e regista cada pedido.
+ * Caminho real falso: troca os caminhos indicados e regista cada pedido. As chaves e os
+ * alvos passam por path.resolve, como os caminhos que o código pede, para os testes
+ * valerem também no Windows (onde '/link' fica 'C:\\link').
  * @param {Record<string, string|Error>} [links] caminho real (ou erro) por caminho
  * @returns {{calls: string[], realpath: (filePath: string) => Promise<string>}}
  */
 function fakeRealpath(links = {}) {
   /** @type {string[]} */
   const calls = [];
+  const resolved = new Map(Object.entries(links).map(([from, to]) => [
+    path.resolve(from),
+    to instanceof Error ? to : path.resolve(to),
+  ]));
   const realpath = async (/** @type {string} */ filePath) => {
     calls.push(filePath);
-    const target = links[filePath];
+    const target = resolved.get(path.resolve(filePath));
     if (target instanceof Error) throw target;
-    return target ?? filePath;
+    return target ?? path.resolve(filePath);
   };
   return { calls, realpath };
 }
@@ -399,7 +405,7 @@ describe('createGit com executor falso', () => {
 
     await createGit(run, realpath).show('main', '/link/cfg/b.json', '/repo');
 
-    assert.ok(!calls.includes('/link/cfg'));
+    assert.ok(!calls.map((call) => path.resolve(call)).includes(path.resolve('/link/cfg')));
   });
 
   test('falha ao obter um caminho real lanca git_show_failed', async () => {

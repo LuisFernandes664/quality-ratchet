@@ -384,6 +384,11 @@ never touched the file; the summary reminds you to check the checkout whenever i
 loosening without authorisation. If you need that checkout, update the branch (merge or
 rebase) before the ratchet runs.
 
+The contract is read at the pull request's `merge_base` when the server reports one
+(Gitea and Forgejo, whose `base.sha` is the current tip of the base branch), and at
+`base.sha` on GitHub. The `base-ref` input overrides both, for example with a tag or a
+branch name.
+
 The file read on the base branch is the baseline's path relative to the root of the
 checkout: the nearest folder with a `.git`, going up from the baseline's folder to the
 workspace, or the workspace itself when there is none. So a repository checked out into a
@@ -524,7 +529,8 @@ proxy (recent Node.js 22 and 24 releases; Node.js 20 cannot):
 | `metrics` | `metrics-current.json` | Flat JSON file with this run's measurements, relative to the workspace. Optional when every metric has a source. |
 | `token` | `${{ github.token }}` | Reads the base branch baseline, refreshes the title and labels, and posts the comment. An empty token skips every API call: no governance and no comment. |
 | `comment` | `true` | Post or update the summary comment on the pull request. |
-| `comment-author` | (empty) | Login of the account that posts the comment (for example `my-app[bot]`). Only its comments are updated. Empty uses the token's login, or any bot account when the token has none (`GITHUB_TOKEN`, GitHub Apps). |
+| `comment-author` | (empty) | Login of the account that posts the comment (for example `my-app[bot]`). Only its comments are updated. Empty uses the token's login; when the token has none, any bot account (`GITHUB_TOKEN`, GitHub Apps) or, on Gitea Actions, `gitea-actions`. |
+| `base-ref` | (empty) | Git ref where the base branch baseline (the contract) is read. Empty uses the merge base when the server reports it (Gitea, Forgejo), else the base commit of the pull request. |
 | `name` | (empty) | Name of this ratchet when a repository runs several. |
 | `bypass-label` | `hotfix-bypass-ratchet` | Label that forgives a failure, for production hotfixes. |
 | `lower-baseline-pattern` | `^chore(\([^)]*\))?: lower baseline` | Case-insensitive regular expression that the title must match to loosen the baseline. |
@@ -777,10 +783,16 @@ needs Node.js 20 or later. Older runner configurations map their default labels 
 later. Map the label in `runs-on` to an image with Node.js 20 or later (for example
 `node:24-bookworm`).
 
-If the comment is not updated in place (a new one appears on every run), set
-`comment-author` to the login of the Actions user that posts it (for example
-`gitea-actions`). Without it, the action only updates comments by the token's login or,
-when it cannot learn that login from the token, by `[bot]` accounts.
+On Gitea, the `pull_request` checkout is the head of the pull request, not a merge
+commit, and `base.sha` is the current tip of the base branch. The action reads the
+contract at the `merge_base` the server reports, which matches that checkout, so a branch
+that is behind is not reported as loosening what the base branch tightened later.
+
+On Gitea Actions (`GITEA_ACTIONS=true`), when the token does not reveal its login, the
+action updates the comments of `gitea-actions`, the user that posts with the workflow
+token. On Forgejo, or if a new comment still appears on every run, set `comment-author`
+to the login that posts it. Without it, the action only updates comments by the token's
+login or, when it cannot learn that login, by `[bot]` accounts.
 
 Depending on the instance, `uses:` may need the full URL
 (`https://github.com/LuisFernandes664/quality-ratchet@v2`). This setup is not tested in

@@ -500,6 +500,26 @@ describe('runAction: write-baseline', () => {
   });
 });
 
+/** Rota do baseline no repositório, sem a referência. */
+const CONTENTS_ROUTE = `/repos/${REPO}/contents/quality-baseline.json`;
+
+/** Pedido do baseline na merge base 'mb1'. */
+const CONTENTS_AT_MERGE_BASE = `GET ${CONTENTS_ROUTE}?ref=mb1`;
+
+/** Cobertura do contrato depois de o ramo base a apertar. */
+const TIGHT = { value: 85, direction: 'up' };
+
+/**
+ * Referências em que o baseline foi pedido à API.
+ * @param {Array<{method: string, route: string}>} calls
+ * @returns {string[]}
+ */
+function contentRefs(calls) {
+  return calls
+    .filter((call) => call.route.startsWith(`${CONTENTS_ROUTE}?ref=`))
+    .map((call) => call.route.slice(`${CONTENTS_ROUTE}?ref=`.length));
+}
+
 describe('runAction: governação do baseline', () => {
   test('baixar o baseline sem título autorizado falha', async (t) => {
     const { code, read } = await runScenario(t, {
@@ -529,6 +549,37 @@ describe('runAction: governação do baseline', () => {
 
     const route = `/repos/${REPO}/contents/pkg/quality-baseline.json?ref=${BASE_SHA}`;
     assert.ok(calls.some((call) => call.route === route));
+  });
+
+  test('com merge_base (Gitea, Forgejo) lê o contrato na merge base', async (t) => {
+    const event = { action: 'opened', pull_request: { ...pullRequest(), merge_base: 'mb1' } };
+    const routes = { ...prRoutes(), [CONTENTS_AT_MERGE_BASE]: raw(BASELINE) };
+
+    const { calls } = await runScenario(t, { files: GREEN, env: WITH_TOKEN, event, routes });
+
+    assert.deepEqual(contentRefs(calls), ['mb1']);
+  });
+
+  test('um ramo atrasado não afrouxa o que o ramo base apertou depois', async (t) => {
+    const tightened = { ...BASELINE, metrics: { ...BASELINE.metrics, coverage: TIGHT } };
+    const event = { action: 'opened', pull_request: { ...pullRequest(), merge_base: 'mb1' } };
+    const routes = {
+      ...prRoutes({ base: tightened }), [CONTENTS_AT_MERGE_BASE]: raw(BASELINE),
+    };
+
+    const { code } = await runScenario(t, { files: GREEN, env: WITH_TOKEN, event, routes });
+
+    assert.equal(code, 0);
+  });
+
+  test('o input base-ref prevalece sobre a merge base e o base.sha', async (t) => {
+    const event = { action: 'opened', pull_request: { ...pullRequest(), merge_base: 'mb1' } };
+    const env = { ...WITH_TOKEN, 'INPUT_BASE-REF': 'v1.2.3' };
+    const routes = { ...prRoutes(), [`GET ${CONTENTS_ROUTE}?ref=v1.2.3`]: raw(BASELINE) };
+
+    const { calls } = await runScenario(t, { files: GREEN, env, event, routes });
+
+    assert.deepEqual(contentRefs(calls), ['v1.2.3']);
   });
 
   test('baseline inexistente no ramo base gera aviso e segue sem governação', async (t) => {
@@ -1097,6 +1148,38 @@ describe('runAction: autor do comentário', () => {
     });
 
     assert.equal(calls.some((call) => call.route === '/user'), false);
+  });
+
+  test('no Gitea Actions sem login actualiza os comentários de gitea-actions', async (t) => {
+    const env = { ...WITH_TOKEN, GITEA_ACTIONS: 'true' };
+    const routes = markedBy('mallory', 'gitea-actions');
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [PATCH_43]);
+  });
+
+  test('no Gitea Actions o login devolvido por GET /user prevalece', async (t) => {
+    const env = { ...WITH_TOKEN, GITEA_ACTIONS: 'true' };
+    const routes = { ...markedBy('ana', 'gitea-actions'), [USER]: json({ login: 'ana' }) };
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [PATCH_42]);
+  });
+
+  test('fora do Gitea Actions gitea-actions não é autor por omissão', async (t) => {
+    const routes = markedBy('mallory', 'gitea-actions');
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [CREATE_COMMENT]);
   });
 
   test('uma falha de GET /user só gera aviso e o exit segue o gate', async (t) => {
