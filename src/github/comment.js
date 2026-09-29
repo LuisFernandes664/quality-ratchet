@@ -6,7 +6,7 @@
  * começar pelo marcador, e esse comentário nunca pode receber (nem esconder) o relatório.
  */
 
-import { GitHubApiError } from '../core/errors.js';
+import { ConfigError, GitHubApiError } from '../core/errors.js';
 
 /** @typedef {import('./client.js').GitHubClient} GitHubClient */
 /** @typedef {import('./client.js').IssueComment} IssueComment */
@@ -43,6 +43,24 @@ export const MAX_COMMENT_LENGTH = 65536;
 export function commentMarker(name = '') {
   const suffix = name.trim();
   return suffix === '' ? `<!-- ${MARKER_NAME} -->` : `<!-- ${MARKER_NAME}:${suffix} -->`;
+}
+
+/** Comentário HTML completo, numa só linha. */
+const HTML_COMMENT = /^<!--(?:(?!-->)[^\r\n])*-->$/;
+
+/**
+ * Marcador escolhido pelo utilizador, para assumir o comentário de outro gate: um
+ * comentário HTML completo (`<!-- quality-gate -->`) fica como está, e só o nome é
+ * envolvido (`quality-gate` dá `<!-- quality-gate -->`).
+ * @param {string} value valor do input comment-marker, não vazio
+ * @returns {string}
+ * @throws {ConfigError} config_marker_invalid quando não é um comentário HTML de uma linha
+ */
+export function customMarker(value) {
+  const text = value.trim();
+  const marker = text.startsWith('<!--') ? text : `<!-- ${text} -->`;
+  if (HTML_COMMENT.test(marker)) return marker;
+  throw new ConfigError('config_marker_invalid', { value: JSON.stringify(value) });
 }
 
 /**

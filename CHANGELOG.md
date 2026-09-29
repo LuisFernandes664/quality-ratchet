@@ -7,6 +7,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `comment-marker` input: the hidden marker of the summary comment, so the action takes
+  over the comment of a gate it replaces instead of leaving it behind, stale (#5).
+
 ## [2.1.0] - 2026-09-29
 
 ### Added

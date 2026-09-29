@@ -898,6 +898,35 @@ describe('runAction: comentário', () => {
     ]);
   });
 
+  test('comment-marker assume o comentário de outro gate', async (t) => {
+    const bot = { login: 'github-actions[bot]' };
+    const existing = [{ id: 42, body: '<!-- quality-gate -->\nold', user: bot }];
+    const routes = {
+      ...prRoutes(),
+      [LIST_COMMENTS]: json(existing),
+      [LIST_COMMENTS_PAGE_2]: json([]),
+      [`PATCH /repos/${REPO}/issues/comments/42`]: json({ id: 42 }),
+    };
+    const env = { ...WITH_TOKEN, 'INPUT_COMMENT-MARKER': 'quality-gate' };
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env, event: pullRequestEvent(), routes,
+    });
+
+    const patch = calls.find((call) => call.method === 'PATCH');
+    const body = /** @type {{body: string}} */ (patch?.body).body;
+    assert.ok(body.startsWith('<!-- quality-gate -->\n## Quality ratchet'));
+  });
+
+  test('comment-marker inválido termina com 1 e explica o erro', async (t) => {
+    const env = { ...WITH_TOKEN, 'INPUT_COMMENT-MARKER': 'a --> b' };
+
+    const { code, lines } = await runScenario(t, { files: GREEN, env });
+
+    assert.equal(code, 1);
+    assert.ok(commands(lines, 'error').some((line) => line.includes('comment-marker')));
+  });
+
   test('comment false não publica comentário', async (t) => {
     const { calls } = await runScenario(t, {
       files: GREEN,

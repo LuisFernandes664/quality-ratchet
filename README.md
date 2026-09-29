@@ -530,6 +530,7 @@ proxy (recent Node.js 22 and 24 releases; Node.js 20 cannot):
 | `token` | `${{ github.token }}` | Reads the base branch baseline, refreshes the title and labels, and posts the comment. An empty token skips every API call: no governance and no comment. |
 | `comment` | `true` | Post or update the summary comment on the pull request. |
 | `comment-author` | (empty) | Login of the account that posts the comment (for example `my-app[bot]`). Only its comments are updated. Empty uses the token's login; when the token has none, any bot account (`GITHUB_TOKEN`, GitHub Apps) or, on Gitea Actions, `gitea-actions`. |
+| `comment-marker` | (empty) | Hidden marker that identifies the summary comment, as a name (`quality-gate`) or a full HTML comment (`<!-- quality-gate -->`). Set it to take over the comment of a gate this action replaces. Empty uses `<!-- quality-ratchet -->` or `<!-- quality-ratchet:name -->`. |
 | `base-ref` | (empty) | Git ref where the base branch baseline (the contract) is read. Empty uses the merge base when the server reports it (Gitea, Forgejo), else the base commit of the pull request. |
 | `name` | (empty) | Name of this ratchet when a repository runs several. |
 | `bypass-label` | `hotfix-bypass-ratchet` | Label that forgives a failure, for production hotfixes. |

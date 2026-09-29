@@ -167,6 +167,8 @@ const EN = {
     + `use one of: ${p.supported}`,
   config_path_exists: (p) => `${p.path} already exists; use --force to overwrite it`,
   config_input_required: (p) => `"${p.input}" is required`,
+  config_marker_invalid: (p) => `comment-marker ${p.value} must be a name or a one-line `
+    + 'HTML comment such as <!-- quality-gate -->',
   cli_command_unknown: (p) => `unknown command "${p.command}"; run with --help`,
   cli_option_invalid: (p) => `invalid options: ${p.reason}`,
   init_metric_absent: (p) => `metric "${p.name}" is not in the metrics file`,
@@ -387,6 +389,8 @@ const PT = {
     + `usa um de: ${p.supported}`,
   config_path_exists: (p) => `${p.path} já existe; usa --force para o substituir`,
   config_input_required: (p) => `"${p.input}" é obrigatório`,
+  config_marker_invalid: (p) => `comment-marker ${p.value} tem de ser um nome ou um `
+    + 'comentário HTML de uma linha, como <!-- quality-gate -->',
   cli_command_unknown: (p) => `comando desconhecido "${p.command}"; corre com --help`,
   cli_option_invalid: (p) => `opções inválidas: ${p.reason}`,
   init_metric_absent: (p) => `a métrica "${p.name}" não está no ficheiro de métricas`,

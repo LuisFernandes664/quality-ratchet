@@ -34,6 +34,13 @@ inputs:
       account (GITHUB_TOKEN, GitHub Apps) or, on Gitea Actions, gitea-actions.
     required: false
     default: ""
+  comment-marker:
+    description: >-
+      Hidden marker that identifies the summary comment, as a name (quality-gate) or a full
+      HTML comment (<!-- quality-gate -->). Set it to take over the comment of a gate this
+      action replaces. Empty uses <!-- quality-ratchet --> or <!-- quality-ratchet:name -->.
+    required: false
+    default: ''
   base-ref:
     description: >-
       Git ref where the base branch baseline (the contract) is read. Empty uses the merge
