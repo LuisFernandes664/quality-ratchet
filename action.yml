@@ -34,6 +34,13 @@ inputs:
       account (GITHUB_TOKEN, GitHub Apps) or, on Gitea Actions, gitea-actions.
     required: false
     default: ""
+  base-ref:
+    description: >-
+      Git ref where the base branch baseline (the contract) is read. Empty uses the merge
+      base when the server reports it (Gitea, Forgejo), else the base commit of the pull
+      request.
+    required: false
+    default: ''
   name:
     description: >-
       Name of this ratchet when a repository runs several (for example one per package).

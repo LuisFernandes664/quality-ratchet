@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `base-ref` input: the ref where the contract is read, overriding the merge base or the
+  base commit of the pull request (#3).
 - The Release workflow can be run by hand on `main` to publish the release of the version
   in `package.json`, with its changelog entry as notes, and move the major tag.
 
@@ -20,6 +22,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The test suite passes on Windows: `.gitattributes` keeps LF line endings with
   `core.autocrlf=true`, the path fakes of the git tests are platform neutral, and CI runs
   the tests on `windows-latest` (#11).
+- On Gitea and Forgejo the contract is read at the pull request's `merge_base` instead of
+  `base.sha`, which is the current tip of the base branch there: a branch that is behind
+  is no longer reported as loosening what the base branch tightened later (#3).
 
 ## [2.0.0] - 2026-09-27
 

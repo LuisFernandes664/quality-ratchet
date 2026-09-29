@@ -42,6 +42,8 @@ const DENIED_STATUSES = new Set([401, 403, 404]);
  * @property {string} title
  * @property {string[]} labels nomes das etiquetas
  * @property {string} baseSha
+ * @property {string} mergeBase `merge_base` do Gitea e do Forgejo ('' no GitHub, que não o
+ *   devolve)
  * @property {string} headSha
  * @property {string} baseRepo `full_name` do repositório base (ex: 'dono/repo')
  * @property {string} headRepo `full_name` do repositório de origem ('' se o fork foi apagado)
@@ -171,6 +173,7 @@ export function mapPullRequest(data) {
     title: asString(pr.title),
     labels: asArray(pr.labels).map(labelName).filter((name) => name !== ''),
     baseSha: asString(base.sha),
+    mergeBase: asString(pr.merge_base),
     headSha: asString(head.sha),
     baseRepo: asString(asRecord(base.repo).full_name),
     headRepo: asString(asRecord(head.repo).full_name),

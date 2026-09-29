@@ -627,6 +627,7 @@ describe('createGitHubClient: getPullRequest', () => {
       title: 'feat: nova métrica',
       labels: ['hotfix', 'docs'],
       baseSha: 'aaa111',
+      mergeBase: '',
       headSha: 'bbb222',
       baseRepo: 'dono/projecto',
       headRepo: 'colaborador/projecto',
@@ -638,6 +639,11 @@ describe('mapPullRequest', () => {
   test('devolve headRepo vazio quando o fork foi apagado', () => {
     const info = mapPullRequest({ ...PULL_REQUEST, head: { sha: 'bbb222', repo: null } });
     assert.equal(info.headRepo, '');
+  });
+
+  test('lê a merge_base quando o servidor a devolve', () => {
+    const info = mapPullRequest({ ...PULL_REQUEST, merge_base: 'ccc333' });
+    assert.equal(info.mergeBase, 'ccc333');
   });
 
   test('aceita labels em forma de string', () => {

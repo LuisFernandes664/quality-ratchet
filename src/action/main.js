@@ -106,6 +106,7 @@ const COMMENT_REDUCTIONS = [
  * @property {string} token
  * @property {boolean} comment
  * @property {string} commentAuthor login dos comentários a actualizar ('' descobre-o)
+ * @property {string} baseRef referência do contrato ('' usa a merge base ou base.sha)
  * @property {string} name
  * @property {string} bypassLabel
  * @property {string} lowerBaselinePattern
@@ -174,6 +175,7 @@ function readInputs(env) {
     token: readInput(env, 'token'),
     comment: readBooleanInput(env, 'comment', true),
     commentAuthor: readInput(env, 'comment-author'),
+    baseRef: readInput(env, 'base-ref'),
     name: readInput(env, 'name'),
     bypassLabel: readOptionalInput(env, 'bypass-label', DEFAULTS.bypassLabel),
     lowerBaselinePattern: readOptionalInput(env, 'lower-baseline-pattern', DEFAULTS.lowerPattern),
@@ -308,9 +310,34 @@ async function loadBaseBaseline(run, pr) {
   const repoPath = repositoryPath(await checkoutRoot(run), run.inputs.baseline);
   const text = repoPath.startsWith('../')
     ? null
-    : await run.client.getFileAtRef(requireRepository(run.deps.env), repoPath, pr.baseSha);
+    : await readContract(run, run.client, repoPath, pr);
   if (text === null) return withNote(run, 'note_base_missing', { path: repoPath });
   return parseBaseBaseline(run, text, repoPath);
+}
+
+/**
+ * Conteúdo do baseline na referência do contrato, ou null quando não existe lá.
+ * @param {ActionRun} run
+ * @param {GitHubClient} client
+ * @param {string} repoPath caminho do baseline no repositório
+ * @param {PullRequestInfo} pr
+ * @returns {Promise<string|null>}
+ */
+function readContract(run, client, repoPath, pr) {
+  const repo = requireRepository(run.deps.env);
+  return client.getFileAtRef(repo, repoPath, contractRef(run, pr));
+}
+
+/**
+ * Referência onde se lê o contrato: o input base-ref, a merge base quando o servidor a
+ * indica (Gitea e Forgejo, onde `base.sha` é a ponta actual do ramo base e não o ponto de
+ * onde o ramo saiu) ou, no GitHub, `base.sha`.
+ * @param {ActionRun} run
+ * @param {PullRequestInfo} pr
+ * @returns {string}
+ */
+function contractRef(run, pr) {
+  return run.inputs.baseRef || pr.mergeBase || pr.baseSha;
 }
 
 /**
