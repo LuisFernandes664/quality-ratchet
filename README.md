@@ -524,7 +524,7 @@ proxy (recent Node.js 22 and 24 releases; Node.js 20 cannot):
 | `metrics` | `metrics-current.json` | Flat JSON file with this run's measurements, relative to the workspace. Optional when every metric has a source. |
 | `token` | `${{ github.token }}` | Reads the base branch baseline, refreshes the title and labels, and posts the comment. An empty token skips every API call: no governance and no comment. |
 | `comment` | `true` | Post or update the summary comment on the pull request. |
-| `comment-author` | (empty) | Login of the account that posts the comment (for example `my-app[bot]`). Only its comments are updated. Empty uses the token's login, or any bot account when the token has none (`GITHUB_TOKEN`, GitHub Apps). |
+| `comment-author` | (empty) | Login of the account that posts the comment (for example `my-app[bot]`). Only its comments are updated. Empty uses the token's login; when the token has none, any bot account (`GITHUB_TOKEN`, GitHub Apps) or, on Gitea Actions, `gitea-actions`. |
 | `name` | (empty) | Name of this ratchet when a repository runs several. |
 | `bypass-label` | `hotfix-bypass-ratchet` | Label that forgives a failure, for production hotfixes. |
 | `lower-baseline-pattern` | `^chore(\([^)]*\))?: lower baseline` | Case-insensitive regular expression that the title must match to loosen the baseline. |
@@ -777,10 +777,11 @@ needs Node.js 20 or later. Older runner configurations map their default labels 
 later. Map the label in `runs-on` to an image with Node.js 20 or later (for example
 `node:24-bookworm`).
 
-If the comment is not updated in place (a new one appears on every run), set
-`comment-author` to the login of the Actions user that posts it (for example
-`gitea-actions`). Without it, the action only updates comments by the token's login or,
-when it cannot learn that login from the token, by `[bot]` accounts.
+On Gitea Actions (`GITEA_ACTIONS=true`), when the token does not reveal its login, the
+action updates the comments of `gitea-actions`, the user that posts with the workflow
+token. On Forgejo, or if a new comment still appears on every run, set `comment-author`
+to the login that posts it. Without it, the action only updates comments by the token's
+login or, when it cannot learn that login, by `[bot]` accounts.
 
 Depending on the instance, `uses:` may need the full URL
 (`https://github.com/LuisFernandes664/quality-ratchet@v2`). This setup is not tested in

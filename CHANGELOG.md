@@ -12,6 +12,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Release workflow can be run by hand on `main` to publish the release of the version
   in `package.json`, with its changelog entry as notes, and move the major tag.
 
+### Fixed
+
+- On Gitea Actions the summary comment is updated in place instead of a new one on every
+  run: without `comment-author` and without a login from the token, the comments of
+  `gitea-actions` are updated (#4).
+
 ## [2.0.0] - 2026-09-27
 
 Compared with 1.0.0 (tag `v1.0.0`, commit fb8087b), the action was rewritten around a

@@ -1099,6 +1099,38 @@ describe('runAction: autor do comentário', () => {
     assert.equal(calls.some((call) => call.route === '/user'), false);
   });
 
+  test('no Gitea Actions sem login actualiza os comentários de gitea-actions', async (t) => {
+    const env = { ...WITH_TOKEN, GITEA_ACTIONS: 'true' };
+    const routes = markedBy('mallory', 'gitea-actions');
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [PATCH_43]);
+  });
+
+  test('no Gitea Actions o login devolvido por GET /user prevalece', async (t) => {
+    const env = { ...WITH_TOKEN, GITEA_ACTIONS: 'true' };
+    const routes = { ...markedBy('ana', 'gitea-actions'), [USER]: json({ login: 'ana' }) };
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [PATCH_42]);
+  });
+
+  test('fora do Gitea Actions gitea-actions não é autor por omissão', async (t) => {
+    const routes = markedBy('mallory', 'gitea-actions');
+
+    const { calls } = await runScenario(t, {
+      files: GREEN, env: WITH_TOKEN, event: pullRequestEvent(), routes,
+    });
+
+    assert.deepEqual(writes(calls), [CREATE_COMMENT]);
+  });
+
   test('uma falha de GET /user só gera aviso e o exit segue o gate', async (t) => {
     const routes = { ...markedBy('github-actions[bot]', 'ana'), [USER]: json({ m: 'x' }, 500) };
 

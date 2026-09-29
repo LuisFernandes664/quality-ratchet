@@ -30,8 +30,8 @@ inputs:
   comment-author:
     description: >-
       Login of the account that posts the comment (for example my-app[bot]). Only its
-      comments are updated. Empty uses the token's login, or any bot account when the token
-      has none (GITHUB_TOKEN, GitHub Apps).
+      comments are updated. Empty uses the token's login; when the token has none, any bot
+      account (GITHUB_TOKEN, GitHub Apps) or, on Gitea Actions, gitea-actions.
     required: false
     default: ""
   name:

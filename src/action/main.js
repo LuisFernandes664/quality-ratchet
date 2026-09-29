@@ -53,6 +53,9 @@ const READ_ONLY_STATUSES = new Set([403, 404]);
 const QUIET_STATUSES = new Set([Status.IMPROVED, Status.UNCHANGED]);
 
 /** Nota que acompanha um comentário abreviado para caber no limite da API. */
+/** Utilizador em nome do qual o Gitea Actions publica com o token do workflow. */
+const GITEA_ACTIONS_USER = 'gitea-actions';
+
 const ABBREVIATED_NOTE = Object.freeze({ code: 'note_comment_abbreviated', params: {} });
 
 /**
@@ -536,9 +539,8 @@ async function publishComment(run, pr, report, summary) {
 }
 
 /**
- * Pedido de upsert do comentário. O autor é o input comment-author ou, sem ele, o login do
- * token; quando o token não tem login (GITHUB_TOKEN, GitHub Apps), null aceita só contas
- * de bot. Comentários de outras pessoas com o mesmo marcador nunca são alvo.
+ * Pedido de upsert do comentário, com o autor dado por commentAuthor. Comentários de outras
+ * pessoas com o mesmo marcador nunca são alvo.
  * @param {ActionRun} run
  * @param {GitHubClient} client
  * @param {PullRequestInfo} pr
@@ -550,9 +552,25 @@ async function commentRequest(run, client, pr, body) {
     repo: requireRepository(run.deps.env),
     number: pr.number,
     marker: commentMarker(run.inputs.name),
-    author: run.inputs.commentAuthor || await client.getAuthenticatedLogin(),
+    author: await commentAuthor(run, client),
     body,
   };
+}
+
+/**
+ * Autor dos comentários a actualizar: o input comment-author ou o login do token. No Gitea
+ * Actions o token do workflow não revela o login (GET /user é recusado) e os comentários
+ * saem em nome de `gitea-actions`, que não termina em `[bot]`: sem este caso, cada
+ * execução publicaria um comentário novo.
+ * @param {ActionRun} run
+ * @param {GitHubClient} client
+ * @returns {Promise<string|null>} null aceita só contas de bot
+ */
+async function commentAuthor(run, client) {
+  if (run.inputs.commentAuthor) return run.inputs.commentAuthor;
+  const login = await client.getAuthenticatedLogin();
+  if (login !== null) return login;
+  return run.deps.env.GITEA_ACTIONS === 'true' ? GITEA_ACTIONS_USER : null;
 }
 
 /**
