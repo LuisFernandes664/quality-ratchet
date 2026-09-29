@@ -11,10 +11,13 @@ const FORMATS = [
   'stryker',
   'sarif',
   'eslint',
+  'stylelint',
   'jscpd',
   'npm-audit',
   'pip-audit',
+  'dotnet-vulnerable',
   'junit',
+  'trx',
   'json',
 ];
 

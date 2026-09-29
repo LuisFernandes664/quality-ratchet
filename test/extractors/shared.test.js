@@ -20,6 +20,8 @@ import {
   readNumber,
   requireContent,
   resolvePointer,
+  rootAttributes,
+  tagAttributes,
 } from '../../src/extractors/shared.js';
 
 /** Pasta dos extractors, para as verificações sobre o código-fonte. */
@@ -48,12 +50,20 @@ const MALFORMED = [
   ['sarif com nível desconhecido', { format: 'sarif', path: 'r', levels: ['x'] }, '{}',
     'reason_level_unknown'],
   ['eslint com objecto', { format: 'eslint', path: 'r' }, '{}', 'reason_eslint_not_array'],
+  ['stylelint com objecto', { format: 'stylelint', path: 'r' }, '{}',
+    'reason_stylelint_not_array'],
+  ['stylelint com severidade desconhecida', { format: 'stylelint', path: 'r' },
+    '[{"warnings":[{"severity":"info"}]}]', 'reason_severity_unknown'],
   ['jscpd sem statistics', { format: 'jscpd', path: 'r' }, '{}', 'reason_key_missing'],
   ['npm-audit falhado', { format: 'npm-audit', path: 'r' }, '{"error":{"code":"E1"}}',
     'reason_npm_audit_failed'],
   ['pip-audit com dependencies objecto', { format: 'pip-audit', path: 'r' },
     '{"dependencies":{}}', 'reason_not_array'],
+  ['dotnet-vulnerable com erro em problems', { format: 'dotnet-vulnerable', path: 'r' },
+    '{"problems":[{"level":"error","text":"x"}],"projects":[]}', 'reason_dotnet_list_errors'],
   ['junit sem suite', { format: 'junit', path: 'r' }, '<html/>', 'reason_junit_no_suite'],
+  ['trx sem <Counters>', { format: 'trx', path: 'r' }, '<TestRun><ResultSummary/></TestRun>',
+    'reason_trx_no_counters'],
   ['json com ponteiro relativo', { format: 'json', path: 'r', pointer: 'a' }, '{}',
     'reason_pointer_not_absolute'],
   ['json com ponteiro inexistente', { format: 'json', path: 'r', pointer: '/a' }, '{}',
@@ -355,6 +365,54 @@ describe('countTags', () => {
 
   test('trata o nome como texto literal e não como expressão regular', () => {
     assert.equal(countTags('<r><a.b/><axb/></r>', 'a.b'), 1);
+  });
+});
+
+describe('rootAttributes', () => {
+  test('devolve os atributos da raiz depois da declaração, do DOCTYPE e de comentários', () => {
+    const xml = '<?xml version="1.0"?>\n<!DOCTYPE r>\n<!-- <x a="0"/> -->\n'
+      + '<r a="1" b=\'2\'><c/></r>';
+    assert.deepEqual(rootAttributes(xml, 'r', 'x'), new Map([['a', '1'], ['b', '2']]));
+  });
+
+  test('raiz com outro nome dá reason_xml_root', () => {
+    assert.throws(() => rootAttributes('<report/>', 'coverage', 'x'), {
+      ...UNPARSEABLE,
+      params: {
+        format: 'x',
+        reason: { code: 'reason_xml_root', params: { found: 'report', expected: 'coverage' } },
+      },
+    });
+  });
+
+  test('texto sem elementos dá reason_xml_no_element', () => {
+    assert.throws(() => rootAttributes('line-rate=0.8', 'coverage', 'x'), {
+      ...UNPARSEABLE,
+      params: { format: 'x', reason: { code: 'reason_xml_no_element', params: {} } },
+    });
+  });
+});
+
+describe('tagAttributes', () => {
+  test('devolve os atributos de cada tag, pela ordem do documento', () => {
+    const xml = '<r><item id="1">a</item><item id="2"/></r>';
+    assert.deepEqual(tagAttributes(xml, 'item'), [new Map([['id', '1']]), new Map([['id', '2']])]);
+  });
+
+  test('não inclui elementos cujo nome apenas começa pelo pedido', () => {
+    assert.deepEqual(tagAttributes('<r><itemList id="1"/><item-x id="2"/></r>', 'item'), []);
+  });
+
+  test('aceita ">" e "/>" dentro dos valores dos atributos', () => {
+    const xml = '<r><item name="a > b" path=\'x/>y\' id="1"/></r>';
+    assert.deepEqual(tagAttributes(xml, 'item'), [
+      new Map([['name', 'a > b'], ['path', 'x/>y'], ['id', '1']]),
+    ]);
+  });
+
+  test('ignora comentários e secções CDATA', () => {
+    const xml = '<r><!-- <item id="1"/> --><x><![CDATA[<item id="2"/>]]></x></r>';
+    assert.deepEqual(tagAttributes(xml, 'item'), []);
   });
 });
 

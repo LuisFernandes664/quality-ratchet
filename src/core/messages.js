@@ -228,6 +228,16 @@ const EN = {
   reason_sarif_execution_failed: (p) => `"${p.run}" reports an unsuccessful tool execution`
     + withDetails(p.details),
   reason_eslint_not_array: () => 'expected an array of file results',
+  reason_stylelint_not_array: () => 'expected an array of file results',
+  reason_stylelint_invalid_options: (p) => 'some rules have invalid options and did not run, '
+    + `so the count is incomplete${withDetails(p.details)}`,
+  reason_severity_unknown: (p) => `unknown severity "${p.severity}" in "${p.path}"; known `
+    + `severities: ${p.known}`,
+  reason_dotnet_list_errors: (p) => 'dotnet list package reported errors, so the list of '
+    + `packages is incomplete${withDetails(p.details)}`,
+  reason_dotnet_not_vulnerable: (p) => `the listing was made with "${p.parameters}", `
+    + 'without --vulnerable, so it has no vulnerabilities to count',
+  reason_trx_no_counters: () => 'no <Counters> element found in <ResultSummary>',
   reason_npm_audit_failed: (p) => `npm audit failed${withDetails(p.details)}`,
   reason_mutant_status_unknown: (p) => `unknown mutant status "${p.status}" in "${p.path}"`,
   reason_not_a_revision: () => 'not a revision: it is empty or starts with "-"',
@@ -459,6 +469,17 @@ const PT = {
   reason_sarif_execution_failed: (p) => `"${p.run}" indica que a execução da ferramenta falhou`
     + withDetails(p.details),
   reason_eslint_not_array: () => 'esperava-se uma lista de resultados por ficheiro',
+  reason_stylelint_not_array: () => 'esperava-se uma lista de resultados por ficheiro',
+  reason_stylelint_invalid_options: (p) => 'há regras com opções inválidas que não correram, '
+    + `por isso a contagem está incompleta${withDetails(p.details)}`,
+  reason_severity_unknown: (p) => `severidade desconhecida "${p.severity}" em "${p.path}"; `
+    + `severidades conhecidas: ${p.known}`,
+  reason_dotnet_list_errors: (p) => 'o dotnet list package indicou erros, por isso a lista de '
+    + `pacotes está incompleta${withDetails(p.details)}`,
+  reason_dotnet_not_vulnerable: (p) => `a listagem foi feita com "${p.parameters}", sem `
+    + '--vulnerable, por isso não tem vulnerabilidades para contar',
+  reason_trx_no_counters: () => 'não foi encontrado nenhum elemento <Counters> em '
+    + '<ResultSummary>',
   reason_npm_audit_failed: (p) => `o npm audit falhou${withDetails(p.details)}`,
   reason_mutant_status_unknown: (p) => `estado de mutante desconhecido "${p.status}" em `
     + `"${p.path}"`,

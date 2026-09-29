@@ -94,10 +94,13 @@
             "stryker",
             "sarif",
             "eslint",
+            "stylelint",
             "jscpd",
             "npm-audit",
             "pip-audit",
+            "dotnet-vulnerable",
             "junit",
+            "trx",
             "json"
           ],
           "description": "Report format."
@@ -164,6 +167,10 @@
           "then": { "properties": { "field": { "enum": ["total", "errors", "warnings"] } } }
         },
         {
+          "if": { "properties": { "format": { "const": "stylelint" } }, "required": ["format"] },
+          "then": { "properties": { "field": { "enum": ["total", "errors", "warnings"] } } }
+        },
+        {
           "if": { "properties": { "format": { "const": "jscpd" } }, "required": ["format"] },
           "then": {
             "properties": { "field": { "enum": ["percentage", "clones", "duplicated_lines"] } }
@@ -194,9 +201,39 @@
           "then": { "properties": { "field": { "enum": ["count"] } } }
         },
         {
+          "if": {
+            "properties": { "format": { "const": "dotnet-vulnerable" } },
+            "required": ["format"]
+          },
+          "then": {
+            "properties": {
+              "field": {
+                "enum": [
+                  "total",
+                  "critical",
+                  "high",
+                  "moderate",
+                  "low",
+                  "high+",
+                  "moderate+",
+                  "low+"
+                ]
+              }
+            }
+          }
+        },
+        {
           "if": { "properties": { "format": { "const": "junit" } }, "required": ["format"] },
           "then": {
             "properties": { "field": { "enum": ["tests", "failures", "errors", "skipped"] } }
+          }
+        },
+        {
+          "if": { "properties": { "format": { "const": "trx" } }, "required": ["format"] },
+          "then": {
+            "properties": {
+              "field": { "enum": ["tests", "executed", "passed", "failed", "skipped"] }
+            }
           }
         },
         {
