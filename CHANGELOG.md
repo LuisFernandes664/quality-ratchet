@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-29
+
 ### Added
 
 - `comment-marker` input: the hidden marker of the summary comment, so the action takes
@@ -228,7 +230,8 @@ First release, published as the `v1.0.0` and `v1` tags.
 - The `bypass-label` (default `hotfix-bypass-ratchet`) and a title matching
   `lower-baseline-pattern` (default `^(chore: lower baseline|refactor:)`) forgive a failure.
 
-[Unreleased]: https://github.com/LuisFernandes664/quality-ratchet/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/LuisFernandes664/quality-ratchet/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.2.0
 [2.1.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.1.0
 [2.0.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.0.0
 [1.0.0]: https://github.com/LuisFernandes664/quality-ratchet/tree/v1.0.0
