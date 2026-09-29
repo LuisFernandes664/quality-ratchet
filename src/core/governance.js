@@ -6,6 +6,7 @@
  */
 import path from 'node:path';
 
+import { sourcesOf } from './baseline.js';
 import { ConfigError } from './errors.js';
 import { EPSILON, isBetter } from './compare.js';
 
@@ -24,7 +25,8 @@ const DENIED = Object.freeze({ granted: false, reason: null });
 /**
  * Comparadores por campo: dizem se o PR afrouxou, apertou ou só alterou cada campo da
  * regra. A `source` decide o que é medido, por isso qualquer mudança nela afrouxa: sem
- * isso, apontar a métrica para outro relatório esconderia uma regressão. `target` e
+ * isso, apontar a métrica para outro relatório esconderia uma regressão. Passar
+ * `when_missing` de 'fail' para 'skip' afrouxa, e o inverso aperta. `target` e
  * `description` são informativos e só ficam registados.
  * @type {Array<[string, (before: MetricRule, after: MetricRule) => FieldVerdict]>}
  */
@@ -35,6 +37,7 @@ const FIELD_CHECKS = [
   ['min', compareMin],
   ['max', compareMax],
   ['source', (before, after) => (sourceKey(before) === sourceKey(after) ? null : 'loosened')],
+  ['when_missing', compareWhenMissing],
   ['target', (before, after) => informative(before.target, after.target)],
   ['description', (before, after) => informative(before.description, after.description)],
 ];
@@ -115,20 +118,43 @@ function change(name, kind, fields, before, after) {
 
 /**
  * Identidade da source de uma regra, para saber se o PR mudou o que é medido. A ordem e
- * as repetições de `levels` e `rules` não contam, nem as formas equivalentes do caminho (`./a` é
- * `a`). Tudo o resto conta, incluindo acrescentar ou retirar a source, ou escrever o
+ * as repetições de `levels` e `rules` não contam, nem as formas equivalentes do caminho
+ * (`./a` é `a`). Tudo o resto conta, incluindo acrescentar ou retirar a source, ou escrever o
  * `field` por omissão que antes estava implícito: na dúvida, pede-se autorização. As
  * chaves desconhecidas ficam de fora, porque os extractors não as lêem.
  * @param {MetricRule|undefined} rule
  * @returns {string} '' quando a regra não existe ou não tem source
  */
 export function sourceKey(rule) {
-  const source = rule?.source;
-  if (source === undefined) return '';
+  const keys = sourcesOf(rule).map(itemKey).sort();
+  if (keys.length <= 1) return keys[0] ?? '';
+  return JSON.stringify(keys);
+}
+
+/**
+ * Identidade de um relatório de uma source. Com várias sources, a lista de identidades é
+ * ordenada: a soma não depende da ordem, e uma lista de um só elemento é igual ao objecto.
+ * @param {MetricSource} source
+ * @returns {string}
+ */
+function itemKey(source) {
   const file = path.posix.normalize(source.path);
   const { format, field = null, pointer = null } = source;
   return JSON.stringify([format, file, field, pointer, setOf(source.levels),
     setOf(source.rules)]);
+}
+
+/**
+ * `when_missing`: aceitar uma métrica sem medição afrouxa; exigi-la aperta.
+ * @param {MetricRule} before
+ * @param {MetricRule} after
+ * @returns {FieldVerdict}
+ */
+function compareWhenMissing(before, after) {
+  const was = before.whenMissing ?? 'fail';
+  const now = after.whenMissing ?? 'fail';
+  if (was === now) return null;
+  return now === 'skip' ? 'loosened' : 'tightened';
 }
 
 /**
@@ -267,13 +293,26 @@ function stricterRule(base, head) {
     tolerance: Math.min(base.tolerance, head.tolerance),
     ...optional('min', pickBound(base.min, head.min, Math.max)),
     ...optional('max', pickBound(base.max, head.max, Math.min)),
+    ...stricterWhenMissing(base, head),
   }, source);
+}
+
+/**
+ * O mais exigente de dois `when_missing`: só fica 'skip' quando os dois o são. Um 'skip'
+ * que o PR acrescentou dá lugar ao valor do ramo base (explícito ou omitido, e então fica
+ * undefined, que substitui o 'skip' vindo do PR).
+ * @param {MetricRule} base
+ * @param {MetricRule} head
+ * @returns {{whenMissing?: 'fail'|'skip'}}
+ */
+function stricterWhenMissing(base, head) {
+  return { whenMissing: head.whenMissing === 'skip' ? base.whenMissing : head.whenMissing };
 }
 
 /**
  * Cópia da regra com a source indicada, ou sem source quando ela é undefined.
  * @param {MetricRule} rule
- * @param {MetricSource|undefined} source
+ * @param {MetricSource|MetricSource[]|undefined} source
  * @returns {MetricRule}
  */
 function withSource(rule, source) {

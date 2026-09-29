@@ -212,7 +212,8 @@ label: a failure forgiven on the pull request fails again there.
 | `min` | no | Absolute floor: a value below it fails, whatever the baseline says. |
 | `max` | no | Absolute ceiling: a value above it fails, whatever the baseline says. |
 | `target` | no | Goal shown in the summary. Informative only. |
-| `source` | no | Report the value is read from. See [Sources](#sources-reading-reports-directly). Without it, the value comes from the flat metrics file. |
+| `source` | no | Report the value is read from, or a list of reports whose values are added up. See [Sources](#sources-reading-reports-directly). Without it, the value comes from the flat metrics file. |
+| `when_missing` | no (`fail`) | `skip` lets a run without this measurement pass, showing the metric as not measured. See [Optional metrics](#optional-metrics). |
 | `description` | no | Free text for humans. Informative only. |
 
 At the root, `$schema` is optional and only helps editors, `version: 2` names the format,
@@ -255,6 +256,28 @@ goes for a report that is missing, unreadable or empty (an LCOV file with no lin
 Cobertura file without branch data). A collector that quietly drops a metric produces
 exactly the green lie the ratchet exists to prevent, so silence is treated as regression
 rather than as permission. The summary gives the reason for each one.
+
+### Optional metrics
+
+Some metrics are only measured in some runs on purpose, for example the mutation score of
+the changed code, which is expensive and runs only when a label asks for it. Mark them
+with `"when_missing": "skip"`:
+
+```json
+"mutation_changed_code": {
+  "value": 78.5,
+  "direction": "up",
+  "when_missing": "skip",
+  "source": { "format": "stryker", "path": "reports/mutation/mutation.json" }
+}
+```
+
+When the metric is not in the metrics file, or its report does not exist, the run passes
+and the summary shows it as not measured, with the reason; it is neither tightened nor
+reported as regressed. A report that exists but cannot be read still fails: that is a
+broken collector, not a skipped one. When it is measured, it is compared as usual.
+Changing `fail` to `skip` loosens the baseline and needs an authorised title; the reverse
+tightens it.
 
 ### Version 1 baselines
 
@@ -321,6 +344,27 @@ A report that cannot be read or has nothing to measure makes its metric fail, wi
 reason in the summary; the other metrics are still compared, so one run shows every
 problem.
 
+### Several reports in one metric
+
+`source` also takes a list. The values of all the reports are added up, so one metric can
+track, for example, the tests of several .NET test projects, or the lint violations of
+ESLint plus stylelint. Every report in the list is required: if one is missing or cannot
+be read, the metric fails instead of showing a partial sum.
+
+```json
+"lint_violations": {
+  "value": 212,
+  "direction": "down",
+  "source": [
+    { "format": "eslint", "path": "reports/eslint.json" },
+    { "format": "stylelint", "path": "reports/stylelint.json" }
+  ]
+}
+```
+
+The order of the list does not matter to governance, and a list of one report is the same
+as the report on its own; adding or removing a report changes the source.
+
 ### One report per class or project
 
 Some tools split their report. Maven Surefire writes `target/surefire-reports/TEST-*.xml`
@@ -350,10 +394,11 @@ ratchet. So the contract is the baseline **on the base branch**, read through th
 the pull request's base commit:
 
 - **Tightening is free.** A better value, a smaller tolerance, a higher `min`, a lower
-  `max`, a new limit or a new metric: no permission needed.
+  `max`, a new limit, a new metric or `when_missing` back to `fail`: no permission needed.
 - **Loosening needs authorisation.** A worse value, a larger tolerance, a lower or
-  removed `min`, a higher or removed `max`, a changed direction, a removed metric, or a
-  `source` changed, added or removed (`format`, `path`, `field`, `pointer`, `levels`, `rules`;
+  removed `min`, a higher or removed `max`, a changed direction, a removed metric,
+  `when_missing` set to `skip`, or a `source` changed, added or removed (`format`, `path`,
+  `field`, `pointer`, `levels`, `rules`, or a report added to or removed from a list;
   writing out the default `field` also counts) is only accepted when the pull request
   title matches `lower-baseline-pattern` (default `^chore(\([^)]*\))?: lower baseline`,
   case-insensitive). For example `chore: lower baseline after dropping the legacy

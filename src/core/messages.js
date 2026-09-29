@@ -96,6 +96,8 @@ const EN = {
   col_change: () => 'Change',
   col_fields: () => 'Fields',
   missing_value: () => 'missing',
+  not_measured: () => 'not measured',
+  skipped_detail: (p) => `not measured in this run (when_missing: skip): ${p.reason}`,
   change_loosened: () => 'loosened',
   change_tightened: () => 'tightened',
   change_added: () => 'added',
@@ -142,6 +144,8 @@ const EN = {
   direction_invalid: (p) => `the direction of "${p.name}" must be "up" or "down", `
     + `got ${p.value}`,
   tolerance_invalid: (p) => `the tolerance of "${p.name}" must be a number >= 0, got ${p.value}`,
+  when_missing_invalid: (p) => `when_missing of "${p.name}" must be "fail" or "skip", `
+    + `got ${p.value}`,
   limit_not_numeric: (p) => `${p.field} of "${p.name}" must be a number, got ${p.value}`,
   limits_inverted: (p) => `"${p.name}" has min ${p.min} above max ${p.max}`,
   source_invalid: (p) => `the source of "${p.name}" needs text fields "format" and "path"`,
@@ -316,6 +320,8 @@ const PT = {
   col_change: () => 'Alteração',
   col_fields: () => 'Campos',
   missing_value: () => 'em falta',
+  not_measured: () => 'não medida',
+  skipped_detail: (p) => `não medida nesta execução (when_missing: skip): ${p.reason}`,
   change_loosened: () => 'afrouxada',
   change_tightened: () => 'apertada',
   change_added: () => 'nova',
@@ -360,6 +366,8 @@ const PT = {
   description_invalid: (p) => `a descrição de "${p.name}" tem de ser texto, veio ${p.value}`,
   schema_invalid: (p) => `$schema tem de ser texto, veio ${p.value}`,
   direction_invalid: (p) => `a direcção de "${p.name}" tem de ser "up" ou "down", `
+    + `veio ${p.value}`,
+  when_missing_invalid: (p) => `when_missing de "${p.name}" tem de ser "fail" ou "skip", `
     + `veio ${p.value}`,
   tolerance_invalid: (p) => `a tolerância de "${p.name}" tem de ser um número >= 0, `
     + `veio ${p.value}`,

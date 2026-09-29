@@ -52,6 +52,7 @@ const FULL_METRIC = Object.freeze({
   max: 20,
   target: 15,
   description: 'exemplo',
+  when_missing: 'fail',
   source: { format: 'json', path: 'report.json', pointer: '/total' },
 });
 
