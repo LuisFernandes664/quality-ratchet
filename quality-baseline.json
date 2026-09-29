@@ -1,7 +1,7 @@
 {
   "$schema": "./schema/baseline.v2.schema.json",
   "version": 2,
-  "frozen_at": "2026-09-27",
+  "frozen_at": "2026-09-29",
   "metrics": {
     "coverage_lines_pct": {
       "value": 99.7,
@@ -37,7 +37,7 @@
       "description": "Function coverage of src/, including inline callbacks."
     },
     "tests_total": {
-      "value": 1319,
+      "value": 1327,
       "direction": "up",
       "source": {
         "format": "junit",
