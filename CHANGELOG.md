@@ -17,6 +17,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On Gitea Actions the summary comment is updated in place instead of a new one on every
   run: without `comment-author` and without a login from the token, the comments of
   `gitea-actions` are updated (#4).
+- The test suite passes on Windows: `.gitattributes` keeps LF line endings with
+  `core.autocrlf=true`, the path fakes of the git tests are platform neutral, and CI runs
+  the tests on `windows-latest` (#11).
 
 ## [2.0.0] - 2026-09-27
 

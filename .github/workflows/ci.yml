@@ -35,6 +35,20 @@ jobs:
       - run: npm ci
       - run: node --test
 
+  test-windows:
+    name: test (windows, node 24)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node --test
+
   typecheck:
     runs-on: ubuntu-latest
     permissions:

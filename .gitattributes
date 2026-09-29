@@ -1,0 +1,2 @@
+# Fim de linha LF em todas as plataformas: os testes comparam texto byte a byte.
+* text=auto eol=lf
