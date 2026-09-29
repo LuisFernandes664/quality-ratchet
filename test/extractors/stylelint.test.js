@@ -145,6 +145,22 @@ describe('stylelint', () => {
     });
   });
 
+  test('um ficheiro sem a lista invalidOptionWarnings conta normalmente', () => {
+    const { invalidOptionWarnings: _, ...older } = file('a.css', [SYNTAX_ERROR]);
+    assert.equal(run(JSON.stringify([older])), 1);
+  });
+
+  test('um aviso de opções inválidas sem texto também rejeita o relatório', () => {
+    const text = JSON.stringify([{ ...file('a.css', []), invalidOptionWarnings: [{}] }]);
+    assert.throws(() => run(text), {
+      ...UNPARSEABLE,
+      params: {
+        format: FORMAT,
+        reason: { code: 'reason_stylelint_invalid_options', params: { details: '' } },
+      },
+    });
+  });
+
   test('array vazio devolve 0', () => {
     assert.equal(run('[]'), 0);
   });

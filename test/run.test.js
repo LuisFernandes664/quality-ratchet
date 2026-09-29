@@ -96,6 +96,22 @@ describe('collectMeasurements com varias sources', () => {
     assert.deepEqual(measurements.cov, { origin: 'source', value: 120 });
   });
 
+  test('um relatorio que existe mas nao se consegue ler fica ilegivel com o motivo', async () => {
+    const fs = {
+      exists: async () => true,
+      readText: async () => {
+        throw new Error('EACCES: permission denied');
+      },
+    };
+
+    const { measurements } = await collectMeasurements(fs, summed, { baselineDir: '.' });
+
+    assert.deepEqual(measurements.cov.error, {
+      code: 'file_unreadable',
+      params: { path: 'a/lcov.info', reason: 'EACCES: permission denied' },
+    });
+  });
+
   test('um relatorio em falta deixa a metrica em falta em vez de somar so parte', async () => {
     const fs = memoryFs({ 'a/lcov.info': LCOV });
 
