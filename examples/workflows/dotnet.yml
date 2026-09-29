@@ -55,4 +55,11 @@ jobs:
         # Semgrep exits with 0 when it finds issues (unless --error is given).
         run: semgrep scan --config p/csharp --sarif --output reports/semgrep.sarif
 
+      - name: Vulnerable packages
+        # The listing needs a restore; it has no output file option, hence the redirect.
+        run: |
+          dotnet restore
+          dotnet list package --vulnerable --include-transitive --format json \
+            > reports/dotnet-vulnerable.json
+
       - uses: LuisFernandes664/quality-ratchet@v2

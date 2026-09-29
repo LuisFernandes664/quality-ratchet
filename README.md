@@ -316,10 +316,13 @@ used. Percentages are between 0 and 100 and are not rounded.
 | `stryker` | `score`, `score_covered`, `killed`, `survived`, `no_coverage`, `timeout` | mutants by status (mutation-testing-report-schema). `score` = detected / (detected + survived + no coverage); `score_covered` leaves out mutants without coverage. Detected = killed + timeout | StrykerJS (`json` reporter), Stryker.NET |
 | `sarif` | `count` | results of all runs, except suppressed ones and those the tool's own baseline marks `absent`. Optional `levels` (`error`, `warning`, `note`, `none`); a result without a `level` takes its rule's default level, or `warning`. Optional `rules`: rule ids to count (`["CA1502", "S3776"]`; a hierarchical id such as `CA1502/sub` counts for `CA1502`), combined with `levels` when both are set; a result without a rule id is not counted. SARIF 2.1.0 only: other versions are rejected (`dotnet build` writes 1.0.0 by default: use `-p:ErrorLog=build.sarif%2Cversion=2.1`). A run whose `invocations` report `executionSuccessful: false` (an ESLint parsing error, missing classes in SpotBugs) is rejected instead of giving a partial count | ruff, Semgrep, CodeQL, ESLint SARIF formatter |
 | `eslint` | `total`, `errors`, `warnings` | `errorCount` / `warningCount` summed over all files | `eslint -f json` |
+| `stylelint` | `total`, `errors`, `warnings` | entries of `warnings` in all files, by `severity` (`error` or `warning`); a CSS syntax error is an `error` entry (rule `CssSyntaxError`). `deprecations` and `parseErrors` are not counted; an empty array counts 0. A report with `invalidOptionWarnings` is rejected: a rule with invalid options does not run, and the count would drop without anyone noticing | `stylelint --formatter json --output-file <file>` |
 | `jscpd` | `percentage`, `clones`, `duplicated_lines` | `statistics.total` | `jscpd --reporters json` |
 | `npm-audit` | `total`, `critical`, `high`, `moderate`, `low`, `info`, `high+`, `moderate+`, `low+` | `metadata.vulnerabilities`. `high+` is high plus critical, and so on | `npm audit --json` (npm 6 and later) |
 | `pip-audit` | `count` | distinct vulnerabilities per dependency (entries that share an `id` or an alias count once), summed over all dependencies; a project with no dependencies counts 0 | `pip-audit -f json` |
+| `dotnet-vulnerable` | `total`, `critical`, `high`, `moderate`, `low`, `high+`, `moderate+`, `low+` | distinct advisories per package version (`id@resolvedVersion` plus `advisoryurl`; ids and versions compared case-insensitively) over the top-level and transitive packages of all projects and frameworks: a vulnerable package used by five projects counts once. `high+` is high plus critical, and so on. A report whose `problems` lists an `error` (a project that was not restored), or whose `parameters` lack `--vulnerable`, is rejected; no vulnerable packages count 0 | `dotnet list package --vulnerable --include-transitive --format json` |
 | `junit` | `tests`, `failures`, `errors`, `skipped` | `tests` / `skipped`: number of `<testcase>` / `<skipped>` elements; `failures` / `errors`: number of `<testcase>` with at least one `<failure>` / `<error>` (several in one test, as Vitest and jest-junit write them, count once) | pytest `--junitxml`, jest-junit, Vitest; Maven Surefire and Gradle once merged ([below](#one-report-per-class-or-project)) |
+| `trx` | `tests`, `executed`, `passed`, `failed`, `skipped` | `total`, `executed`, `passed` and `failed` of the `<Counters>` in `<ResultSummary>`; `skipped`: number of `<UnitTestResult>` with `outcome="NotExecuted"` (VSTest counts skipped tests in `total` and leaves `notExecuted` at 0). A run with `total="0"` has nothing to measure. One file per test project: list them in `source` to add them up | `dotnet test --logger trx` (VSTest: xUnit, NUnit, MSTest) |
 | `json` | `value` | the value at `pointer` (JSON Pointer, RFC 6901, required): a number, a numeric string, or an array (its length) | any tool with JSON output |
 
 Two formats take options:
@@ -364,6 +367,27 @@ be read, the metric fails instead of showing a partial sum.
 
 The order of the list does not matter to governance, and a list of one report is the same
 as the report on its own; adding or removing a report changes the source.
+
+For .NET, `dotnet test --logger trx` writes one TRX file per test project. Give each
+project its own results folder so the paths are fixed, and list them:
+
+```sh
+dotnet test tests/App.Tests --logger "trx;LogFileName=tests.trx" \
+  --results-directory reports/trx/App.Tests
+dotnet test tests/App.IntegrationTests --logger "trx;LogFileName=tests.trx" \
+  --results-directory reports/trx/App.IntegrationTests
+```
+
+```json
+"tests_total": {
+  "value": 1240,
+  "direction": "up",
+  "source": [
+    { "format": "trx", "path": "reports/trx/App.Tests/tests.trx" },
+    { "format": "trx", "path": "reports/trx/App.IntegrationTests/tests.trx" }
+  ]
+}
+```
 
 ### One report per class or project
 
