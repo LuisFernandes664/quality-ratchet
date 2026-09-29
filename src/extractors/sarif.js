@@ -1,7 +1,8 @@
 // @ts-check
 /**
  * Extractor de relatórios SARIF 2.1.0 (CodeQL, Semgrep, ESLint, Trivy, ...). Conta os
- * resultados activos e não suprimidos de todos os runs, opcionalmente filtrados por nível.
+ * resultados activos e não suprimidos de todos os runs, opcionalmente filtrados por nível e
+ * por regra.
  * Rejeita outras versões do SARIF (a 1.0.0 marca as supressões de outra forma) e os runs em
  * que a própria ferramenta declara que a execução falhou, porque nesse caso os resultados
  * estão incompletos (ex: o ESLint não analisa um ficheiro com erro de sintaxe).
@@ -50,14 +51,24 @@ export const sarifExtractor = defineExtractor({
 });
 
 /**
- * Conta os resultados activos cujo nível está em `source.levels` (todos, se omitido).
- * Só aceita SARIF 2.1.0, e cada run tem de ter corrido com sucesso.
+ * @typedef {object} ResultFilter
+ * @property {unknown[]|null} levels níveis a contar (null: todos)
+ * @property {string[]|null} rules regras a contar (null: todas)
+ */
+
+/**
+ * Conta os resultados activos cujo nível está em `source.levels` e cuja regra está em
+ * `source.rules` (todos, quando omitidos). Só aceita SARIF 2.1.0, e cada run tem de ter
+ * corrido com sucesso.
  * @param {string} text
  * @param {ReadRequest} request
  * @returns {number}
  */
 function readSarif(text, request) {
-  const levels = parseLevels(request.source.levels);
+  const filter = {
+    levels: parseLevels(request.source.levels),
+    rules: parseRules(request.source.rules),
+  };
   const log = parseJson(text, FORMAT);
   checkVersion(log);
   const runs = readPath(log, ['runs'], FORMAT);
@@ -65,7 +76,7 @@ function readSarif(text, request) {
     throw unparseable(FORMAT, because('reason_not_array', { path: 'runs' }));
   }
   if (runs.length === 0) throw reportEmpty(FORMAT);
-  return runs.reduce((total, run, index) => total + countRun(run, index, levels), 0);
+  return runs.reduce((total, run, index) => total + countRun(run, index, filter), 0);
 }
 
 /**
@@ -103,21 +114,62 @@ function parseLevels(levels) {
 }
 
 /**
- * Conta os resultados de um run que são activos e têm um dos níveis pedidos.
+ * Valida a opção `rules`: identificadores de regras, como `CA1502` ou `S3776`.
+ * @param {unknown} rules
+ * @returns {string[]|null} null quando todas as regras contam
+ */
+function parseRules(rules) {
+  if (rules === undefined) return null;
+  const valid = Array.isArray(rules) && rules.length > 0
+    && rules.every((rule) => typeof rule === 'string' && rule.trim() !== '');
+  if (!valid) throw invalidOption(FORMAT, 'rules', because('reason_rules_invalid'));
+  return rules;
+}
+
+/**
+ * Conta os resultados de um run que são activos e passam o filtro de nível e de regra.
  * @param {unknown} run
  * @param {number} index
- * @param {unknown[]|null} levels
+ * @param {ResultFilter} filter
  * @returns {number}
  */
-function countRun(run, index, levels) {
+function countRun(run, index, filter) {
   if (!isPlainObject(run)) {
     throw unparseable(FORMAT, because('reason_not_object', { path: `runs[${index}]` }));
   }
   rejectFailedExecution(run, index);
   return runResults(run, index)
     .filter((result) => isActive(result))
-    .filter((result) => levels === null || levels.includes(effectiveLevel(result, run)))
+    .filter((result) => filter.levels === null
+      || filter.levels.includes(effectiveLevel(result, run)))
+    .filter((result) => filter.rules === null || matchesRule(ruleId(result, run), filter.rules))
     .length;
+}
+
+/**
+ * Indica se o identificador pertence a uma das regras pedidas. Os identificadores do SARIF
+ * podem ser hierárquicos (`CA1502/sub`): pedir `CA1502` conta também os subníveis.
+ * @param {string} id
+ * @param {string[]} rules
+ * @returns {boolean}
+ */
+function matchesRule(id, rules) {
+  return id !== '' && rules.some((rule) => id === rule || id.startsWith(`${rule}/`));
+}
+
+/**
+ * Identificador da regra de um resultado: `ruleId`, `rule.id` ou, só com índice, o `id`
+ * da regra resolvida em `tool.driver` ou na extensão indicada.
+ * @param {SarifObject} result
+ * @param {SarifObject} run
+ * @returns {string} '' quando o resultado não indica regra
+ */
+function ruleId(result, run) {
+  const reference = isPlainObject(result.rule) ? result.rule : {};
+  const id = result.ruleId ?? reference.id;
+  if (typeof id === 'string') return id;
+  const rule = findRule(result, run);
+  return isPlainObject(rule) && typeof rule.id === 'string' ? rule.id : '';
 }
 
 /**
@@ -211,23 +263,33 @@ function effectiveLevel(result, run) {
 }
 
 /**
- * Lê o `defaultConfiguration.level` da regra do resultado, procurada pelo índice
- * (`rule.index` ou `ruleIndex`) ou, sem índice válido, pelo identificador.
+ * Lê o `defaultConfiguration.level` da regra do resultado.
  * @param {SarifObject} result
  * @param {SarifObject} run
  * @returns {unknown} undefined quando a regra ou o nível não existem
  */
 function ruleDefaultLevel(result, run) {
+  const rule = findRule(result, run);
+  const configuration = isPlainObject(rule) ? rule.defaultConfiguration : undefined;
+  return isPlainObject(configuration) ? configuration.level : undefined;
+}
+
+/**
+ * Regra de um resultado, procurada pelo índice (`rule.index` ou `ruleIndex`) ou, sem índice
+ * válido, pelo identificador, no componente da ferramenta a que o resultado se refere.
+ * @param {SarifObject} result
+ * @param {SarifObject} run
+ * @returns {unknown} undefined quando a regra não existe
+ */
+function findRule(result, run) {
   /** @type {SarifObject} */
   const reference = isPlainObject(result.rule) ? result.rule : {};
   const rules = componentRules(run, reference.toolComponent);
   const index = reference.index ?? result.ruleIndex;
   const id = reference.id ?? result.ruleId;
-  const rule = (typeof index === 'number' ? rules[index] : undefined)
+  return (typeof index === 'number' ? rules[index] : undefined)
     ?? rules.find((candidate) => id !== undefined && isPlainObject(candidate)
       && candidate.id === id);
-  const configuration = isPlainObject(rule) ? rule.defaultConfiguration : undefined;
-  return isPlainObject(configuration) ? configuration.level : undefined;
 }
 
 /**

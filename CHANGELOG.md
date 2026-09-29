@@ -11,6 +11,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `comment-marker` input: the hidden marker of the summary comment, so the action takes
   over the comment of a gate it replaces instead of leaving it behind, stale (#5).
+- `rules` on a `sarif` source: count only the results of the listed rule ids (for example
+  the complexity rules of a `dotnet build` log), combined with `levels` (#7).
 
 ## [2.1.0] - 2026-09-29
 

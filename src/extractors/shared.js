@@ -88,6 +88,7 @@ export const REASON_CODES = Object.freeze([
   'reason_lcov_invalid_value',
   'reason_levels_invalid',
   'reason_level_unknown',
+  'reason_rules_invalid',
   'reason_sarif_version',
   'reason_sarif_version_missing',
   'reason_sarif_execution_failed',

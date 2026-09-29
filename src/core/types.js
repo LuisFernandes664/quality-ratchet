@@ -21,6 +21,7 @@
  * @property {string} [field] campo do formato (ex: 'lines', 'branches')
  * @property {string} [pointer] JSON Pointer, só para o formato 'json'
  * @property {string[]} [levels] níveis SARIF a contar
+ * @property {string[]} [rules] identificadores de regras SARIF a contar
  */
 
 /**

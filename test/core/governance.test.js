@@ -183,6 +183,19 @@ describe('diffBaselines com sources', () => {
     assert.equal(changeOf(diffBaselines(SOURCED, head), 'coverage')?.kind, 'loosened');
   });
 
+  test('acrescentar rules SARIF afrouxa a metrica', () => {
+    const head = sourcedWith('lint', { source: { ...SARIF, rules: ['CA1502'] } });
+
+    assert.deepEqual(changeOf(diffBaselines(SOURCED, head), 'lint')?.loosenedFields, ['source']);
+  });
+
+  test('as mesmas rules noutra ordem nao sao alteracao', () => {
+    const base = sourcedWith('lint', { source: { ...SARIF, rules: ['S1541', 'CA1502'] } });
+    const head = sourcedWith('lint', { source: { ...SARIF, rules: ['CA1502', 'S1541'] } });
+
+    assert.equal(changeOf(diffBaselines(base, head), 'lint')?.kind, 'unchanged');
+  });
+
   test('os mesmos levels noutra ordem nao sao alteracao', () => {
     const head = sourcedWith('lint', { source: { ...SARIF, levels: ['warning', 'error'] } });
 
