@@ -2,7 +2,7 @@
 /**
  * Utilitários comuns aos extractors de relatórios: construção de extractors, erros com motivo
  * do catálogo de mensagens, leitura de JSON, percentagens, JSON Pointer (RFC 6901) e
- * contagem de elementos XML.
+ * leitura de elementos XML (elemento raiz, atributos e contagem de tags).
  */
 
 import { ExtractorError } from '../core/errors.js';
@@ -49,6 +49,12 @@ const STRICT_NUMBER = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/;
 /** Comentários, secções CDATA e instruções de processamento de um documento XML. */
 const XML_NOISE = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>/g;
 
+/** Primeira tag de abertura bem formada: nome e lista de atributos. */
+const XML_START_TAG = /<([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*\/?>/;
+
+/** Atributo XML com valor entre aspas ou plicas. */
+const XML_ATTRIBUTE = /([\w.:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+
 /** Caracteres com significado especial numa expressão regular. */
 const REGEXP_SPECIAL = /[\\^$.*+?()[\]{}|]/g;
 
@@ -84,16 +90,22 @@ export const REASON_CODES = Object.freeze([
   'reason_attribute_not_count',
   'reason_attribute_out_of_range',
   'reason_junit_no_suite',
+  'reason_trx_no_counters',
   'reason_lcov_no_record',
   'reason_lcov_invalid_value',
   'reason_levels_invalid',
   'reason_level_unknown',
+  'reason_severity_unknown',
   'reason_rules_invalid',
   'reason_sarif_version',
   'reason_sarif_version_missing',
   'reason_sarif_execution_failed',
   'reason_eslint_not_array',
+  'reason_stylelint_not_array',
+  'reason_stylelint_invalid_options',
   'reason_npm_audit_failed',
+  'reason_dotnet_list_errors',
+  'reason_dotnet_not_vulnerable',
   'reason_mutant_status_unknown',
 ]);
 
@@ -392,6 +404,54 @@ export function stripXmlNoise(xml) {
 export function countTags(xml, name) {
   const pattern = new RegExp(`<${name.replace(REGEXP_SPECIAL, '\\$&')}(?=[\\s/>])`, 'g');
   return stripXmlNoise(xml).match(pattern)?.length ?? 0;
+}
+
+/**
+ * Localiza o elemento raiz de um documento XML, depois da declaração XML, do DOCTYPE e de
+ * comentários, e exige o nome esperado.
+ * @param {string} xml
+ * @param {string} expected nome do elemento raiz
+ * @param {string} format
+ * @returns {Map<string, string>} atributos do elemento raiz
+ * @throws {ExtractorError} extractor_report_unparseable quando não há nenhum elemento ou a
+ *   raiz tem outro nome
+ */
+export function rootAttributes(xml, expected, format) {
+  const match = XML_START_TAG.exec(stripXmlNoise(xml));
+  if (!match) throw unparseable(format, because('reason_xml_no_element'));
+  const [, name, attributes] = match;
+  if (name !== expected) {
+    throw unparseable(format, because('reason_xml_root', { found: name, expected }));
+  }
+  return parseAttributes(attributes);
+}
+
+/**
+ * Atributos de cada tag de abertura ou auto-fechada de um elemento XML, pela ordem do
+ * documento. Como em countTags, ignora os elementos com nome mais longo e o texto de
+ * comentários e de CDATA. Os valores dos atributos podem ter `>`.
+ * @param {string} xml
+ * @param {string} name nome do elemento
+ * @returns {Map<string, string>[]}
+ */
+export function tagAttributes(xml, name) {
+  const element = name.replace(REGEXP_SPECIAL, '\\$&');
+  const pattern = new RegExp(`<${element}(?=[\\s/>])((?:"[^"]*"|'[^']*'|[^'">])*)>`, 'g');
+  return [...stripXmlNoise(xml).matchAll(pattern)].map((match) => parseAttributes(match[1]));
+}
+
+/**
+ * Converte a lista de atributos de uma tag num mapa nome -> valor.
+ * @param {string} source
+ * @returns {Map<string, string>}
+ */
+function parseAttributes(source) {
+  /** @type {Map<string, string>} */
+  const attributes = new Map();
+  for (const [, name, doubleQuoted, singleQuoted] of source.matchAll(XML_ATTRIBUTE)) {
+    attributes.set(name, doubleQuoted ?? singleQuoted);
+  }
+  return attributes;
 }
 
 /**

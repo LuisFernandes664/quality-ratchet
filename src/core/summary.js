@@ -28,6 +28,7 @@ const ICON = Object.freeze({
   [Status.MISSING]: '❓',
   [Status.INVALID]: '⚠️',
   [Status.LIMIT]: '⛔',
+  [Status.SKIPPED]: '⏭️',
 });
 
 /**
@@ -147,7 +148,8 @@ function renderTable(results, t) {
  * @returns {string}
  */
 function renderRow(row, withTarget, t) {
-  const [before, after] = formatPair(row.before, row.after, t('missing_value'));
+  const absent = t(row.status === Status.SKIPPED ? 'not_measured' : 'missing_value');
+  const [before, after] = formatPair(row.before, row.after, absent);
   const cells = [ICON[row.status], tableCode(row.name), before, after, formatDelta(row)];
   if (withTarget) cells.push(row.target === undefined ? '' : formatNumber(row.target));
   return `| ${cells.join(' | ')} |`;
@@ -247,12 +249,23 @@ function formatPair(before, after, missing) {
  */
 function renderDetails(report, t) {
   const lines = report.outcome.results.flatMap((row) => (row.detail
-    ? [`- ${codeSpan(row.name)}: ${oneLine(t(row.detail.code, row.detail.params))}`]
+    ? [`- ${codeSpan(row.name)}: ${oneLine(detailText(row, t))}`]
     : []));
   if (report.outcome.unlocked.length > 0) {
     lines.push(`- ${t('unlocked_hint', { names: codeList(report.outcome.unlocked) })}`);
   }
   return lines.join('\n');
+}
+
+/**
+ * Explicação de uma métrica; as não medidas dizem que foi por `when_missing: skip`.
+ * @param {MetricResult} row
+ * @param {Translator} t
+ * @returns {string}
+ */
+function detailText(row, t) {
+  const reason = row.detail ? t(row.detail.code, row.detail.params) : '';
+  return row.status === Status.SKIPPED ? t('skipped_detail', { reason }) : reason;
 }
 
 /**

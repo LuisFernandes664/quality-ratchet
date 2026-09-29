@@ -6,6 +6,7 @@
 
 import { ExtractorError } from '../core/errors.js';
 import { coberturaExtractor } from './cobertura.js';
+import { dotnetVulnerableExtractor } from './dotnet-vulnerable.js';
 import { eslintExtractor } from './eslint.js';
 import { istanbulExtractor } from './istanbul.js';
 import { jscpdExtractor } from './jscpd.js';
@@ -17,6 +18,8 @@ import { pipAuditExtractor } from './pip-audit.js';
 import { sarifExtractor } from './sarif.js';
 import { ensureFinite } from './shared.js';
 import { strykerExtractor } from './stryker.js';
+import { stylelintExtractor } from './stylelint.js';
+import { trxExtractor } from './trx.js';
 
 /** @typedef {import('../core/types.js').MetricSource} MetricSource */
 /** @typedef {import('./shared.js').Extractor} Extractor */
@@ -32,10 +35,13 @@ export const EXTRACTORS = Object.freeze(Object.fromEntries([
   strykerExtractor,
   sarifExtractor,
   eslintExtractor,
+  stylelintExtractor,
   jscpdExtractor,
   npmAuditExtractor,
   pipAuditExtractor,
+  dotnetVulnerableExtractor,
   junitExtractor,
+  trxExtractor,
   jsonExtractor,
 ].map((extractor) => [extractor.format, extractor])));
 

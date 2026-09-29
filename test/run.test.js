@@ -81,6 +81,48 @@ describe('loadBaseline', () => {
   });
 });
 
+describe('collectMeasurements com varias sources', () => {
+  const sources = [
+    { format: 'lcov', path: 'a/lcov.info', field: 'lines' },
+    { format: 'lcov', path: 'b/lcov.info', field: 'lines' },
+  ];
+  const summed = v2({ cov: { value: 1, direction: 'up', source: sources } });
+
+  test('soma os valores de todos os relatorios', async () => {
+    const fs = memoryFs({ 'a/lcov.info': LCOV, 'b/lcov.info': LCOV_HALF });
+
+    const { measurements } = await collectMeasurements(fs, summed, { baselineDir: '.' });
+
+    assert.deepEqual(measurements.cov, { origin: 'source', value: 120 });
+  });
+
+  test('um relatorio que existe mas nao se consegue ler fica ilegivel com o motivo', async () => {
+    const fs = {
+      exists: async () => true,
+      readText: async () => {
+        throw new Error('EACCES: permission denied');
+      },
+    };
+
+    const { measurements } = await collectMeasurements(fs, summed, { baselineDir: '.' });
+
+    assert.deepEqual(measurements.cov.error, {
+      code: 'file_unreadable',
+      params: { path: 'a/lcov.info', reason: 'EACCES: permission denied' },
+    });
+  });
+
+  test('um relatorio em falta deixa a metrica em falta em vez de somar so parte', async () => {
+    const fs = memoryFs({ 'a/lcov.info': LCOV });
+
+    const { measurements } = await collectMeasurements(fs, summed, { baselineDir: '.' });
+
+    assert.deepEqual(measurements.cov.error, {
+      code: 'report_not_found', params: { path: 'b/lcov.info' },
+    });
+  });
+});
+
 describe('collectMeasurements', () => {
   const plain = v2({ a: { value: 1, direction: 'up' } });
   const sourced = v2({

@@ -5,7 +5,7 @@
  */
 import path from 'node:path';
 
-import { parseBaseline } from './core/baseline.js';
+import { parseBaseline, sourcesOf } from './core/baseline.js';
 import { BaselineError, ExtractorError, MetricsError } from './core/errors.js';
 import { movedSources } from './core/governance.js';
 import { ownValue } from './core/guards.js';
@@ -173,7 +173,23 @@ async function readMetricsFile(fs, baseline, metricsPath) {
  * @returns {Promise<Measurement>}
  */
 async function measureSource(fs, rule, baselineDir) {
-  const source = /** @type {import('./core/types.js').MetricSource} */ (rule.source);
+  const parts = await Promise.all(sourcesOf(rule).map((source) => (
+    measureReport(fs, source, baselineDir))));
+  const failed = parts.find((part) => part.error !== undefined);
+  if (failed) return failed;
+  const total = parts.reduce((sum, part) => sum + /** @type {number} */ (part.value), 0);
+  return { origin: 'source', value: total };
+}
+
+/**
+ * Mede um relatório. Com várias sources, os valores somam-se e basta um relatório em falta
+ * ou ilegível para a métrica ficar em falta: uma soma parcial seria um valor falso.
+ * @param {FileSystem} fs
+ * @param {import('./core/types.js').MetricSource} source
+ * @param {string} baselineDir
+ * @returns {Promise<Measurement>}
+ */
+async function measureReport(fs, source, baselineDir) {
   const report = await readReport(fs, path.resolve(baselineDir, source.path), source.path);
   if (report.error) return { origin: 'source', error: report.error };
   try {

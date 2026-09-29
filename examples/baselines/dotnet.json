@@ -46,6 +46,17 @@
         ]
       },
       "description": "Semgrep findings of level error and warning; notes are not counted."
+    },
+    "vulnerable_packages": {
+      "value": 0,
+      "direction": "down",
+      "max": 0,
+      "source": {
+        "format": "dotnet-vulnerable",
+        "path": "reports/dotnet-vulnerable.json",
+        "field": "high+"
+      },
+      "description": "High and critical advisories in direct and transitive NuGet packages."
     }
   }
 }

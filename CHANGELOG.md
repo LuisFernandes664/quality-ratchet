@@ -7,6 +7,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-29
+
+### Added
+
+- `when_missing: skip` on a metric: a run without this measurement (not in the metrics
+  file, or its report does not exist) passes and shows the metric as not measured, with
+  the reason. A report that exists but cannot be read still fails. Changing `fail` to
+  `skip` loosens the baseline (#6).
+- `source` takes a list of reports whose values are added up, all of them required: one
+  missing report fails the metric instead of giving a partial sum. The order of the list
+  does not matter to governance (#8, #9).
+- `stylelint` format: `total`, `errors` and `warnings`; a report with
+  `invalidOptionWarnings` is rejected, because a rule with invalid options does not run
+  (#8).
+- `dotnet-vulnerable` format, for `dotnet list package --vulnerable --include-transitive
+  --format json`: distinct advisories per package version, with the same fields as
+  `npm-audit` except `info`; a report with errors in `problems`, or made without
+  `--vulnerable`, is rejected (#8).
+- `trx` format, for `dotnet test --logger trx`: `tests`, `executed`, `passed`, `failed`
+  and `skipped` (#9).
+
 ## [2.2.0] - 2026-09-29
 
 ### Added
@@ -230,7 +251,8 @@ First release, published as the `v1.0.0` and `v1` tags.
 - The `bypass-label` (default `hotfix-bypass-ratchet`) and a title matching
   `lower-baseline-pattern` (default `^(chore: lower baseline|refactor:)`) forgive a failure.
 
-[Unreleased]: https://github.com/LuisFernandes664/quality-ratchet/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/LuisFernandes664/quality-ratchet/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.3.0
 [2.2.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.2.0
 [2.1.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.1.0
 [2.0.0]: https://github.com/LuisFernandes664/quality-ratchet/releases/tag/v2.0.0

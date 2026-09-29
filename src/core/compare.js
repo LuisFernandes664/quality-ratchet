@@ -26,7 +26,14 @@ export const Status = Object.freeze({
   MISSING: /** @type {MetricStatus} */ ('missing'),
   INVALID: /** @type {MetricStatus} */ ('invalid'),
   LIMIT: /** @type {MetricStatus} */ ('limit'),
+  SKIPPED: /** @type {MetricStatus} */ ('skipped'),
 });
+
+/**
+ * Motivos de falta que `when_missing: skip` aceita: a métrica não foi medida nesta execução.
+ * Um relatório que existe mas não se consegue ler continua a falhar: é um colector avariado.
+ */
+const SKIPPABLE = new Set(['metric_not_reported', 'report_not_found']);
 
 /** Estados que fazem a catraca falhar. */
 const FAILING = new Set([Status.REGRESSED, Status.MISSING, Status.INVALID, Status.LIMIT]);
@@ -62,20 +69,41 @@ export function exceedsTolerance(delta, tolerance) {
  * @returns {MetricResult}
  */
 export function evaluate(rule, measurement) {
-  const missing = missingDetail(measurement);
-  if (missing) return { ...emptyResult(rule), status: Status.MISSING, detail: missing };
+  const absent = missingDetail(measurement);
+  if (absent) {
+    return { ...emptyResult(rule), status: missingStatus(rule, absent), detail: absent };
+  }
   const raw = measurement?.value;
   const after = toNumber(raw);
-  if (after === null) {
-    const value = typeof raw === 'number' ? String(raw) : JSON.stringify(raw) ?? String(raw);
-    const detail = issue('value_not_numeric_current', { value });
-    return { ...emptyResult(rule), status: Status.INVALID, detail };
-  }
+  if (after === null) return invalidResult(rule, raw);
   if (rule.value === null) {
     const detail = issue('rule_without_value', { name: rule.name });
     return { ...emptyResult(rule), after, status: Status.MISSING, detail };
   }
   return classify(rule, rule.value, after);
+}
+
+/**
+ * Resultado de uma medição que não é um número.
+ * @param {MetricRule} rule
+ * @param {unknown} raw valor medido
+ * @returns {MetricResult}
+ */
+function invalidResult(rule, raw) {
+  const value = typeof raw === 'number' ? String(raw) : JSON.stringify(raw) ?? String(raw);
+  const detail = issue('value_not_numeric_current', { value });
+  return { ...emptyResult(rule), status: Status.INVALID, detail };
+}
+
+/**
+ * Estado de uma métrica sem medição: em falta, ou não medida quando a regra o permite.
+ * @param {MetricRule} rule
+ * @param {Issue} detail
+ * @returns {MetricStatus}
+ */
+function missingStatus(rule, detail) {
+  const skip = rule.whenMissing === 'skip' && SKIPPABLE.has(detail.code);
+  return skip ? Status.SKIPPED : Status.MISSING;
 }
 
 /**

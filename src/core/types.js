@@ -34,7 +34,8 @@
  * @property {number} [min] limite absoluto inferior
  * @property {number} [max] limite absoluto superior
  * @property {number} [target] objectivo, apenas informativo
- * @property {MetricSource} [source]
+ * @property {MetricSource|MetricSource[]} [source] relatório, ou vários cujos valores se somam
+ * @property {'fail'|'skip'} [whenMissing] 'skip': sem medição, a métrica não é verificada
  * @property {string} [description] texto livre, apenas informativo
  * @property {Record<string, unknown>} [extra] campos desconhecidos, mantidos ao reescrever
  */
@@ -63,8 +64,8 @@
  */
 
 /**
- * @typedef {'improved'|'unchanged'|'tolerated'|'regressed'|'missing'|'invalid'|'limit'}
- *   MetricStatus
+ * @typedef {'improved'|'unchanged'|'tolerated'|'regressed'|'missing'|'invalid'|'limit'
+ *   |'skipped'} MetricStatus
  */
 
 /**

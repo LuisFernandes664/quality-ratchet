@@ -212,7 +212,8 @@ label: a failure forgiven on the pull request fails again there.
 | `min` | no | Absolute floor: a value below it fails, whatever the baseline says. |
 | `max` | no | Absolute ceiling: a value above it fails, whatever the baseline says. |
 | `target` | no | Goal shown in the summary. Informative only. |
-| `source` | no | Report the value is read from. See [Sources](#sources-reading-reports-directly). Without it, the value comes from the flat metrics file. |
+| `source` | no | Report the value is read from, or a list of reports whose values are added up. See [Sources](#sources-reading-reports-directly). Without it, the value comes from the flat metrics file. |
+| `when_missing` | no (`fail`) | `skip` lets a run without this measurement pass, showing the metric as not measured. See [Optional metrics](#optional-metrics). |
 | `description` | no | Free text for humans. Informative only. |
 
 At the root, `$schema` is optional and only helps editors, `version: 2` names the format,
@@ -256,6 +257,28 @@ Cobertura file without branch data). A collector that quietly drops a metric pro
 exactly the green lie the ratchet exists to prevent, so silence is treated as regression
 rather than as permission. The summary gives the reason for each one.
 
+### Optional metrics
+
+Some metrics are only measured in some runs on purpose, for example the mutation score of
+the changed code, which is expensive and runs only when a label asks for it. Mark them
+with `"when_missing": "skip"`:
+
+```json
+"mutation_changed_code": {
+  "value": 78.5,
+  "direction": "up",
+  "when_missing": "skip",
+  "source": { "format": "stryker", "path": "reports/mutation/mutation.json" }
+}
+```
+
+When the metric is not in the metrics file, or its report does not exist, the run passes
+and the summary shows it as not measured, with the reason; it is neither tightened nor
+reported as regressed. A report that exists but cannot be read still fails: that is a
+broken collector, not a skipped one. When it is measured, it is compared as usual.
+Changing `fail` to `skip` loosens the baseline and needs an authorised title; the reverse
+tightens it.
+
 ### Version 1 baselines
 
 The original format still works, and files are rewritten in the format they were read in:
@@ -293,10 +316,13 @@ used. Percentages are between 0 and 100 and are not rounded.
 | `stryker` | `score`, `score_covered`, `killed`, `survived`, `no_coverage`, `timeout` | mutants by status (mutation-testing-report-schema). `score` = detected / (detected + survived + no coverage); `score_covered` leaves out mutants without coverage. Detected = killed + timeout | StrykerJS (`json` reporter), Stryker.NET |
 | `sarif` | `count` | results of all runs, except suppressed ones and those the tool's own baseline marks `absent`. Optional `levels` (`error`, `warning`, `note`, `none`); a result without a `level` takes its rule's default level, or `warning`. Optional `rules`: rule ids to count (`["CA1502", "S3776"]`; a hierarchical id such as `CA1502/sub` counts for `CA1502`), combined with `levels` when both are set; a result without a rule id is not counted. SARIF 2.1.0 only: other versions are rejected (`dotnet build` writes 1.0.0 by default: use `-p:ErrorLog=build.sarif%2Cversion=2.1`). A run whose `invocations` report `executionSuccessful: false` (an ESLint parsing error, missing classes in SpotBugs) is rejected instead of giving a partial count | ruff, Semgrep, CodeQL, ESLint SARIF formatter |
 | `eslint` | `total`, `errors`, `warnings` | `errorCount` / `warningCount` summed over all files | `eslint -f json` |
+| `stylelint` | `total`, `errors`, `warnings` | entries of `warnings` in all files, by `severity` (`error` or `warning`); a CSS syntax error is an `error` entry (rule `CssSyntaxError`). `deprecations` and `parseErrors` are not counted; an empty array counts 0. A report with `invalidOptionWarnings` is rejected: a rule with invalid options does not run, and the count would drop without anyone noticing | `stylelint --formatter json --output-file <file>` |
 | `jscpd` | `percentage`, `clones`, `duplicated_lines` | `statistics.total` | `jscpd --reporters json` |
 | `npm-audit` | `total`, `critical`, `high`, `moderate`, `low`, `info`, `high+`, `moderate+`, `low+` | `metadata.vulnerabilities`. `high+` is high plus critical, and so on | `npm audit --json` (npm 6 and later) |
 | `pip-audit` | `count` | distinct vulnerabilities per dependency (entries that share an `id` or an alias count once), summed over all dependencies; a project with no dependencies counts 0 | `pip-audit -f json` |
+| `dotnet-vulnerable` | `total`, `critical`, `high`, `moderate`, `low`, `high+`, `moderate+`, `low+` | distinct advisories per package version (`id@resolvedVersion` plus `advisoryurl`; ids and versions compared case-insensitively) over the top-level and transitive packages of all projects and frameworks: a vulnerable package used by five projects counts once. `high+` is high plus critical, and so on. A report whose `problems` lists an `error` (a project that was not restored), or whose `parameters` lack `--vulnerable`, is rejected; no vulnerable packages count 0 | `dotnet list package --vulnerable --include-transitive --format json` |
 | `junit` | `tests`, `failures`, `errors`, `skipped` | `tests` / `skipped`: number of `<testcase>` / `<skipped>` elements; `failures` / `errors`: number of `<testcase>` with at least one `<failure>` / `<error>` (several in one test, as Vitest and jest-junit write them, count once) | pytest `--junitxml`, jest-junit, Vitest; Maven Surefire and Gradle once merged ([below](#one-report-per-class-or-project)) |
+| `trx` | `tests`, `executed`, `passed`, `failed`, `skipped` | `total`, `executed`, `passed` and `failed` of the `<Counters>` in `<ResultSummary>`; `skipped`: number of `<UnitTestResult>` with `outcome="NotExecuted"` (VSTest counts skipped tests in `total` and leaves `notExecuted` at 0). A run with `total="0"` has nothing to measure. One file per test project: list them in `source` to add them up | `dotnet test --logger trx` (VSTest: xUnit, NUnit, MSTest) |
 | `json` | `value` | the value at `pointer` (JSON Pointer, RFC 6901, required): a number, a numeric string, or an array (its length) | any tool with JSON output |
 
 Two formats take options:
@@ -320,6 +346,48 @@ Two formats take options:
 A report that cannot be read or has nothing to measure makes its metric fail, with the
 reason in the summary; the other metrics are still compared, so one run shows every
 problem.
+
+### Several reports in one metric
+
+`source` also takes a list. The values of all the reports are added up, so one metric can
+track, for example, the tests of several .NET test projects, or the lint violations of
+ESLint plus stylelint. Every report in the list is required: if one is missing or cannot
+be read, the metric fails instead of showing a partial sum.
+
+```json
+"lint_violations": {
+  "value": 212,
+  "direction": "down",
+  "source": [
+    { "format": "eslint", "path": "reports/eslint.json" },
+    { "format": "stylelint", "path": "reports/stylelint.json" }
+  ]
+}
+```
+
+The order of the list does not matter to governance, and a list of one report is the same
+as the report on its own; adding or removing a report changes the source.
+
+For .NET, `dotnet test --logger trx` writes one TRX file per test project. Give each
+project its own results folder so the paths are fixed, and list them:
+
+```sh
+dotnet test tests/App.Tests --logger "trx;LogFileName=tests.trx" \
+  --results-directory reports/trx/App.Tests
+dotnet test tests/App.IntegrationTests --logger "trx;LogFileName=tests.trx" \
+  --results-directory reports/trx/App.IntegrationTests
+```
+
+```json
+"tests_total": {
+  "value": 1240,
+  "direction": "up",
+  "source": [
+    { "format": "trx", "path": "reports/trx/App.Tests/tests.trx" },
+    { "format": "trx", "path": "reports/trx/App.IntegrationTests/tests.trx" }
+  ]
+}
+```
 
 ### One report per class or project
 
@@ -350,10 +418,11 @@ ratchet. So the contract is the baseline **on the base branch**, read through th
 the pull request's base commit:
 
 - **Tightening is free.** A better value, a smaller tolerance, a higher `min`, a lower
-  `max`, a new limit or a new metric: no permission needed.
+  `max`, a new limit, a new metric or `when_missing` back to `fail`: no permission needed.
 - **Loosening needs authorisation.** A worse value, a larger tolerance, a lower or
-  removed `min`, a higher or removed `max`, a changed direction, a removed metric, or a
-  `source` changed, added or removed (`format`, `path`, `field`, `pointer`, `levels`, `rules`;
+  removed `min`, a higher or removed `max`, a changed direction, a removed metric,
+  `when_missing` set to `skip`, or a `source` changed, added or removed (`format`, `path`,
+  `field`, `pointer`, `levels`, `rules`, or a report added to or removed from a list;
   writing out the default `field` also counts) is only accepted when the pull request
   title matches `lower-baseline-pattern` (default `^chore(\([^)]*\))?: lower baseline`,
   case-insensitive). For example `chore: lower baseline after dropping the legacy

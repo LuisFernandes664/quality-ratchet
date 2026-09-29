@@ -14,7 +14,7 @@ import {
   percentage,
   reportEmpty,
   requireContent,
-  stripXmlNoise,
+  rootAttributes,
   unparseable,
 } from './shared.js';
 
@@ -42,12 +42,6 @@ const ATTRIBUTES = {
   branches: { rate: 'branch-rate', valid: 'branches-valid', covered: 'branches-covered' },
 };
 
-/** Primeira tag de abertura bem formada: nome e lista de atributos. */
-const START_TAG = /<([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*\/?>/;
-
-/** Atributo XML com valor entre aspas ou plicas. */
-const ATTRIBUTE = /([\w.:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-
 /** Extractor do formato `cobertura`. */
 export const coberturaExtractor = defineExtractor({
   format: FORMAT,
@@ -64,7 +58,7 @@ export const coberturaExtractor = defineExtractor({
  * @returns {number}
  */
 function readCobertura(text, request) {
-  const attributes = rootAttributes(requireContent(text, FORMAT));
+  const attributes = rootAttributes(requireContent(text, FORMAT), ROOT, FORMAT);
   const names = ATTRIBUTES[request.field];
   const valid = attributes.get(names.valid);
   if (valid !== undefined && parseStrictNumber(valid) === 0) throw reportEmpty(FORMAT);
@@ -86,35 +80,6 @@ function readCountAttribute(raw, name) {
   const count = parseStrictNumber(raw);
   if (count !== null && Number.isSafeInteger(count) && count >= 0) return count;
   throw unparseable(FORMAT, because('reason_attribute_not_count', { name, value: raw }));
-}
-
-/**
- * Localiza o elemento raiz, depois da declaração XML, do DOCTYPE e de comentários.
- * @param {string} text
- * @returns {Map<string, string>} atributos do elemento raiz
- */
-function rootAttributes(text) {
-  const match = START_TAG.exec(stripXmlNoise(text));
-  if (!match) throw unparseable(FORMAT, because('reason_xml_no_element'));
-  const [, name, attributes] = match;
-  if (name !== ROOT) {
-    throw unparseable(FORMAT, because('reason_xml_root', { found: name, expected: ROOT }));
-  }
-  return parseAttributes(attributes);
-}
-
-/**
- * Converte a lista de atributos de uma tag num mapa nome -> valor.
- * @param {string} source
- * @returns {Map<string, string>}
- */
-function parseAttributes(source) {
-  /** @type {Map<string, string>} */
-  const attributes = new Map();
-  for (const [, name, doubleQuoted, singleQuoted] of source.matchAll(ATTRIBUTE)) {
-    attributes.set(name, doubleQuoted ?? singleQuoted);
-  }
-  return attributes;
 }
 
 /**

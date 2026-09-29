@@ -96,6 +96,8 @@ const EN = {
   col_change: () => 'Change',
   col_fields: () => 'Fields',
   missing_value: () => 'missing',
+  not_measured: () => 'not measured',
+  skipped_detail: (p) => `not measured in this run (when_missing: skip): ${p.reason}`,
   change_loosened: () => 'loosened',
   change_tightened: () => 'tightened',
   change_added: () => 'added',
@@ -142,6 +144,8 @@ const EN = {
   direction_invalid: (p) => `the direction of "${p.name}" must be "up" or "down", `
     + `got ${p.value}`,
   tolerance_invalid: (p) => `the tolerance of "${p.name}" must be a number >= 0, got ${p.value}`,
+  when_missing_invalid: (p) => `when_missing of "${p.name}" must be "fail" or "skip", `
+    + `got ${p.value}`,
   limit_not_numeric: (p) => `${p.field} of "${p.name}" must be a number, got ${p.value}`,
   limits_inverted: (p) => `"${p.name}" has min ${p.min} above max ${p.max}`,
   source_invalid: (p) => `the source of "${p.name}" needs text fields "format" and "path"`,
@@ -224,6 +228,16 @@ const EN = {
   reason_sarif_execution_failed: (p) => `"${p.run}" reports an unsuccessful tool execution`
     + withDetails(p.details),
   reason_eslint_not_array: () => 'expected an array of file results',
+  reason_stylelint_not_array: () => 'expected an array of file results',
+  reason_stylelint_invalid_options: (p) => 'some rules have invalid options and did not run, '
+    + `so the count is incomplete${withDetails(p.details)}`,
+  reason_severity_unknown: (p) => `unknown severity "${p.severity}" in "${p.path}"; known `
+    + `severities: ${p.known}`,
+  reason_dotnet_list_errors: (p) => 'dotnet list package reported errors, so the list of '
+    + `packages is incomplete${withDetails(p.details)}`,
+  reason_dotnet_not_vulnerable: (p) => `the listing was made with "${p.parameters}", `
+    + 'without --vulnerable, so it has no vulnerabilities to count',
+  reason_trx_no_counters: () => 'no <Counters> element found in <ResultSummary>',
   reason_npm_audit_failed: (p) => `npm audit failed${withDetails(p.details)}`,
   reason_mutant_status_unknown: (p) => `unknown mutant status "${p.status}" in "${p.path}"`,
   reason_not_a_revision: () => 'not a revision: it is empty or starts with "-"',
@@ -316,6 +330,8 @@ const PT = {
   col_change: () => 'Alteração',
   col_fields: () => 'Campos',
   missing_value: () => 'em falta',
+  not_measured: () => 'não medida',
+  skipped_detail: (p) => `não medida nesta execução (when_missing: skip): ${p.reason}`,
   change_loosened: () => 'afrouxada',
   change_tightened: () => 'apertada',
   change_added: () => 'nova',
@@ -360,6 +376,8 @@ const PT = {
   description_invalid: (p) => `a descrição de "${p.name}" tem de ser texto, veio ${p.value}`,
   schema_invalid: (p) => `$schema tem de ser texto, veio ${p.value}`,
   direction_invalid: (p) => `a direcção de "${p.name}" tem de ser "up" ou "down", `
+    + `veio ${p.value}`,
+  when_missing_invalid: (p) => `when_missing de "${p.name}" tem de ser "fail" ou "skip", `
     + `veio ${p.value}`,
   tolerance_invalid: (p) => `a tolerância de "${p.name}" tem de ser um número >= 0, `
     + `veio ${p.value}`,
@@ -451,6 +469,17 @@ const PT = {
   reason_sarif_execution_failed: (p) => `"${p.run}" indica que a execução da ferramenta falhou`
     + withDetails(p.details),
   reason_eslint_not_array: () => 'esperava-se uma lista de resultados por ficheiro',
+  reason_stylelint_not_array: () => 'esperava-se uma lista de resultados por ficheiro',
+  reason_stylelint_invalid_options: (p) => 'há regras com opções inválidas que não correram, '
+    + `por isso a contagem está incompleta${withDetails(p.details)}`,
+  reason_severity_unknown: (p) => `severidade desconhecida "${p.severity}" em "${p.path}"; `
+    + `severidades conhecidas: ${p.known}`,
+  reason_dotnet_list_errors: (p) => 'o dotnet list package indicou erros, por isso a lista de '
+    + `pacotes está incompleta${withDetails(p.details)}`,
+  reason_dotnet_not_vulnerable: (p) => `a listagem foi feita com "${p.parameters}", sem `
+    + '--vulnerable, por isso não tem vulnerabilidades para contar',
+  reason_trx_no_counters: () => 'não foi encontrado nenhum elemento <Counters> em '
+    + '<ResultSummary>',
   reason_npm_audit_failed: (p) => `o npm audit falhou${withDetails(p.details)}`,
   reason_mutant_status_unknown: (p) => `estado de mutante desconhecido "${p.status}" em `
     + `"${p.path}"`,

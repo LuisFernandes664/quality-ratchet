@@ -16,7 +16,11 @@ import { isFiniteNumber, isNonEmptyString, isPlainObject } from './guards.js';
 /** Campos reconhecidos numa métrica v2. */
 const METRIC_FIELDS = new Set([
   'value', 'direction', 'tolerance', 'min', 'max', 'target', 'source', 'description',
+  'when_missing',
 ]);
+
+/** Valores aceites em `when_missing`. */
+const WHEN_MISSING = /** @type {const} */ (['fail', 'skip']);
 
 /** Campos reconhecidos em `source`. */
 const SOURCE_FIELDS = new Set(['format', 'path', 'field', 'pointer', 'levels', 'rules']);
@@ -376,17 +380,34 @@ function readNumericFields(name, entry, log) {
 }
 
 /**
- * Lê `source` e `description`.
+ * Lê `source`, `description` e `when_missing`.
  * @param {string} name
  * @param {Record<string, unknown>} entry
  * @param {IssueLog} log
- * @returns {{source?: MetricSource, description?: string}}
+ * @returns {Pick<MetricRule, 'source'|'description'|'whenMissing'>}
  */
 function readExtras(name, entry, log) {
   return {
     ...readDescription(name, entry.description, log),
     ...readSourceEntry(name, entry.source, log),
+    ...readWhenMissing(name, entry.when_missing, log),
   };
+}
+
+/**
+ * `when_missing`: 'fail' (omissão) ou 'skip', para métricas que só se medem em algumas
+ * execuções de propósito.
+ * @param {string} name
+ * @param {unknown} value
+ * @param {IssueLog} log
+ * @returns {{whenMissing?: 'fail'|'skip'}}
+ */
+function readWhenMissing(name, value, log) {
+  if (value === undefined) return {};
+  const known = WHEN_MISSING.find((option) => option === value);
+  if (known) return { whenMissing: known };
+  log.error('when_missing_invalid', { name, value: JSON.stringify(value) });
+  return {};
 }
 
 /**
@@ -404,24 +425,51 @@ function readDescription(name, value, log) {
 }
 
 /**
- * Lê `source`. Chaves desconhecidas dentro dela dão aviso: uma gralha como `feild` faria o
- * extractor medir o campo por omissão sem ninguém dar por isso.
+ * Lê `source`: um relatório, ou uma lista não vazia de relatórios cujos valores se somam.
+ * Chaves desconhecidas dão aviso: uma gralha como `feild` faria o extractor medir o campo
+ * por omissão sem ninguém dar por isso.
  * @param {string} name
  * @param {unknown} raw
  * @param {IssueLog} log
- * @returns {{source?: MetricSource}}
+ * @returns {{source?: MetricSource|MetricSource[]}}
  */
 function readSourceEntry(name, raw, log) {
   if (raw === undefined) return {};
-  const source = readSource(raw);
-  if (!source) {
+  const list = Array.isArray(raw) ? raw : [raw];
+  const sources = list.map(readSource).filter((source) => source !== null);
+  if (list.length === 0 || sources.length < list.length) {
     log.error('source_invalid', { name });
     return {};
   }
+  const offset = Array.isArray(raw) ? 0 : -1;
+  sources.forEach((source, index) => warnSourceKeys(name, source, index + offset, log));
+  return { source: Array.isArray(raw) ? sources : sources[0] };
+}
+
+/**
+ * Avisa das chaves desconhecidas de uma source.
+ * @param {string} name
+ * @param {MetricSource} source
+ * @param {number} index posição na lista, ou -1 quando `source` é um objecto
+ * @param {IssueLog} log
+ * @returns {void}
+ */
+function warnSourceKeys(name, source, index, log) {
+  const prefix = index < 0 ? 'source' : `source[${index}]`;
   for (const key of Object.keys(source)) {
-    if (!SOURCE_FIELDS.has(key)) log.warn('unknown_field', { name, field: `source.${key}` });
+    if (!SOURCE_FIELDS.has(key)) log.warn('unknown_field', { name, field: `${prefix}.${key}` });
   }
-  return { source };
+}
+
+/**
+ * Lista das sources de uma regra (vazia quando os valores vêm do ficheiro de métricas).
+ * @param {MetricRule|undefined} rule
+ * @returns {MetricSource[]}
+ */
+export function sourcesOf(rule) {
+  const source = rule?.source;
+  if (source === undefined) return [];
+  return Array.isArray(source) ? source : [source];
 }
 
 /**
@@ -531,6 +579,7 @@ function serializeRule(rule) {
     if (rule[field] !== undefined) out[field] = rule[field];
   }
   if (rule.source !== undefined) out.source = rule.source;
+  if (rule.whenMissing !== undefined) out.when_missing = rule.whenMissing;
   if (rule.description !== undefined) out.description = rule.description;
   return { ...out, ...rule.extra };
 }
