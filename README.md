@@ -291,7 +291,7 @@ used. Percentages are between 0 and 100 and are not rounded.
 | `istanbul` | `lines`, `statements`, `functions`, `branches` | `total.<field>.covered` / `total.<field>.total` of `coverage-summary.json`, as a percentage (`pct`, which istanbul truncates to 2 decimals, only when the counts are missing) | the `json-summary` reporter of nyc, c8, Jest, Vitest |
 | `cobertura` | `lines`, `branches` | `lines-covered` / `lines-valid` and `branches-covered` / `branches-valid` of the root `<coverage>`, as a percentage; `line-rate` / `branch-rate` (rounded by the tools) only when the counts are missing | `coverage xml` (coverage.py), coverlet, ReportGenerator |
 | `stryker` | `score`, `score_covered`, `killed`, `survived`, `no_coverage`, `timeout` | mutants by status (mutation-testing-report-schema). `score` = detected / (detected + survived + no coverage); `score_covered` leaves out mutants without coverage. Detected = killed + timeout | StrykerJS (`json` reporter), Stryker.NET |
-| `sarif` | `count` | results of all runs, except suppressed ones and those the tool's own baseline marks `absent`. Optional `levels` (`error`, `warning`, `note`, `none`); a result without a `level` takes its rule's default level, or `warning`. SARIF 2.1.0 only: other versions are rejected (`dotnet build` writes 1.0.0 by default: use `-p:ErrorLog=build.sarif%2Cversion=2.1`). A run whose `invocations` report `executionSuccessful: false` (an ESLint parsing error, missing classes in SpotBugs) is rejected instead of giving a partial count | ruff, Semgrep, CodeQL, ESLint SARIF formatter |
+| `sarif` | `count` | results of all runs, except suppressed ones and those the tool's own baseline marks `absent`. Optional `levels` (`error`, `warning`, `note`, `none`); a result without a `level` takes its rule's default level, or `warning`. Optional `rules`: rule ids to count (`["CA1502", "S3776"]`; a hierarchical id such as `CA1502/sub` counts for `CA1502`), combined with `levels` when both are set; a result without a rule id is not counted. SARIF 2.1.0 only: other versions are rejected (`dotnet build` writes 1.0.0 by default: use `-p:ErrorLog=build.sarif%2Cversion=2.1`). A run whose `invocations` report `executionSuccessful: false` (an ESLint parsing error, missing classes in SpotBugs) is rejected instead of giving a partial count | ruff, Semgrep, CodeQL, ESLint SARIF formatter |
 | `eslint` | `total`, `errors`, `warnings` | `errorCount` / `warningCount` summed over all files | `eslint -f json` |
 | `jscpd` | `percentage`, `clones`, `duplicated_lines` | `statistics.total` | `jscpd --reporters json` |
 | `npm-audit` | `total`, `critical`, `high`, `moderate`, `low`, `info`, `high+`, `moderate+`, `low+` | `metadata.vulnerabilities`. `high+` is high plus critical, and so on | `npm audit --json` (npm 6 and later) |
@@ -353,7 +353,7 @@ the pull request's base commit:
   `max`, a new limit or a new metric: no permission needed.
 - **Loosening needs authorisation.** A worse value, a larger tolerance, a lower or
   removed `min`, a higher or removed `max`, a changed direction, a removed metric, or a
-  `source` changed, added or removed (`format`, `path`, `field`, `pointer`, `levels`;
+  `source` changed, added or removed (`format`, `path`, `field`, `pointer`, `levels`, `rules`;
   writing out the default `field` also counts) is only accepted when the pull request
   title matches `lower-baseline-pattern` (default `^chore(\([^)]*\))?: lower baseline`,
   case-insensitive). For example `chore: lower baseline after dropping the legacy
@@ -530,6 +530,7 @@ proxy (recent Node.js 22 and 24 releases; Node.js 20 cannot):
 | `token` | `${{ github.token }}` | Reads the base branch baseline, refreshes the title and labels, and posts the comment. An empty token skips every API call: no governance and no comment. |
 | `comment` | `true` | Post or update the summary comment on the pull request. |
 | `comment-author` | (empty) | Login of the account that posts the comment (for example `my-app[bot]`). Only its comments are updated. Empty uses the token's login; when the token has none, any bot account (`GITHUB_TOKEN`, GitHub Apps) or, on Gitea Actions, `gitea-actions`. |
+| `comment-marker` | (empty) | Hidden marker that identifies the summary comment, as a name (`quality-gate`) or a full HTML comment (`<!-- quality-gate -->`). Set it to take over the comment of a gate this action replaces. Empty uses `<!-- quality-ratchet -->` or `<!-- quality-ratchet:name -->`. |
 | `base-ref` | (empty) | Git ref where the base branch baseline (the contract) is read. Empty uses the merge base when the server reports it (Gitea, Forgejo), else the base commit of the pull request. |
 | `name` | (empty) | Name of this ratchet when a repository runs several. |
 | `bypass-label` | `hotfix-bypass-ratchet` | Label that forgives a failure, for production hotfixes. |

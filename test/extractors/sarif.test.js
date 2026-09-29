@@ -122,6 +122,16 @@ function codeqlResult(index) {
 }
 
 /**
+ * Resultado do CodeQL que só referencia a regra pelo índice, sem `ruleId` nem `rule.id`.
+ * @param {number} index posição da regra em CODEQL_RULES
+ * @returns {Record<string, unknown>}
+ */
+function codeqlResultWithoutId(index) {
+  const { ruleId: _, ...rest } = result('ignorado', undefined);
+  return { ...rest, rule: { index, toolComponent: { index: 0 } } };
+}
+
+/**
  * Registo do CodeQL: as regras estão em `tool.extensions` e o driver não tem nenhuma.
  * Resultados: 2 error (sql-injection e xss), 1 note e 1 warning.
  */
@@ -250,6 +260,47 @@ describe('sarif', () => {
 
   test('resultado sem level usa o nível por omissão da regra em tool.extensions (CodeQL)', () => {
     assert.equal(count(CODEQL, { levels: ['error'] }), 2);
+  });
+
+  test('filtra pelas regras de source.rules', () => {
+    assert.equal(count(REPORT, { rules: ['js/sql-injection', 'js/todo-comment'] }), 2);
+  });
+
+  test('uma regra pedida conta também os seus subníveis hierárquicos', () => {
+    const results = [result('CA1502/method', 'warning'), result('CA15020', 'warning')];
+    const text = log([run('Roslyn', results)]);
+    assert.equal(count(text, { rules: ['CA1502'] }), 1);
+  });
+
+  test('source.rules combina com source.levels', () => {
+    const rules = ['js/sql-injection', 'js/todo-comment'];
+    assert.equal(count(REPORT, { rules, levels: ['note'] }), 1);
+  });
+
+  test('source.rules encontra a regra só pelo índice (CodeQL sem ruleId)', () => {
+    const tool = {
+      driver: { name: 'CodeQL', rules: [] },
+      extensions: [{ name: 'q', rules: CODEQL_RULES }],
+    };
+    const text = log([{ tool, results: [codeqlResultWithoutId(2)] }]);
+    assert.equal(count(text, { rules: ['js/xss'] }), 1);
+  });
+
+  test('resultado sem regra não conta quando há source.rules', () => {
+    const { ruleId: _, ...anonymous } = result('x', 'error');
+    assert.equal(count(log([run('Tool', [anonymous])]), { rules: ['x'] }), 0);
+  });
+
+  test('source.rules vazio é uma opção inválida', () => {
+    assert.throws(() => count(REPORT, { rules: [] }), {
+      name: 'ExtractorError',
+      code: 'extractor_option_invalid',
+      params: {
+        format: FORMAT,
+        option: 'rules',
+        reason: { code: 'reason_rules_invalid', params: {} },
+      },
+    });
   });
 
   test('sem source.levels conta os resultados do CodeQL de todos os níveis', () => {

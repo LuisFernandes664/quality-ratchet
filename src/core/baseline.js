@@ -19,7 +19,7 @@ const METRIC_FIELDS = new Set([
 ]);
 
 /** Campos reconhecidos em `source`. */
-const SOURCE_FIELDS = new Set(['format', 'path', 'field', 'pointer', 'levels']);
+const SOURCE_FIELDS = new Set(['format', 'path', 'field', 'pointer', 'levels', 'rules']);
 
 /** Campos reconhecidos na raiz de um ficheiro v2. O v1 acrescenta `rules`. */
 const ROOT_FIELDS_V2 = new Set(['$schema', 'version', 'frozen_at', 'metrics']);
@@ -436,10 +436,18 @@ function readSource(raw) {
   const optionalText = ['field', 'pointer'].every(
     (key) => raw[key] === undefined || typeof raw[key] === 'string',
   );
-  const levelsOk = raw.levels === undefined
-    || (Array.isArray(raw.levels) && raw.levels.every((level) => typeof level === 'string'));
-  if (!optionalText || !levelsOk) return null;
+  if (!optionalText || !isTextList(raw.levels) || !isTextList(raw.rules)) return null;
   return /** @type {MetricSource} */ ({ ...raw });
+}
+
+/**
+ * Lista opcional de textos (`levels`, `rules`): ausente, ou um array só de strings.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isTextList(value) {
+  return value === undefined || (Array.isArray(value) && value.every((item) => (
+    typeof item === 'string')));
 }
 
 /**

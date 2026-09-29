@@ -249,6 +249,7 @@ describe('action.yml', () => {
       metrics: 'metrics-current.json',
       name: '',
       'comment-author': '',
+      'comment-marker': '',
       'base-ref': '',
       strict: 'false',
       token: '${{ github.token }}',

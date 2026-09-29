@@ -37,7 +37,7 @@
       "description": "Function coverage of src/, including inline callbacks."
     },
     "tests_total": {
-      "value": 1327,
+      "value": 1343,
       "direction": "up",
       "source": {
         "format": "junit",

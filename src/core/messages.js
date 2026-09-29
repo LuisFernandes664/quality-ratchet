@@ -167,6 +167,8 @@ const EN = {
     + `use one of: ${p.supported}`,
   config_path_exists: (p) => `${p.path} already exists; use --force to overwrite it`,
   config_input_required: (p) => `"${p.input}" is required`,
+  config_marker_invalid: (p) => `comment-marker ${p.value} must be a name or a one-line `
+    + 'HTML comment such as <!-- quality-gate -->',
   cli_command_unknown: (p) => `unknown command "${p.command}"; run with --help`,
   cli_option_invalid: (p) => `invalid options: ${p.reason}`,
   init_metric_absent: (p) => `metric "${p.name}" is not in the metrics file`,
@@ -215,6 +217,7 @@ const EN = {
   reason_lcov_invalid_value: (p) => `invalid "${p.key}" value: "${p.value}"`,
   reason_levels_invalid: (p) => `must be a non-empty array of ${p.known}`,
   reason_level_unknown: (p) => `unknown level "${p.level}"`,
+  reason_rules_invalid: () => 'must be a non-empty array of rule ids, such as ["CA1502"]',
   reason_sarif_version: (p) => `SARIF version "${p.version}" is not supported, only 2.1.0 `
     + '(for dotnet build, use -p:ErrorLog=<file>.sarif%2Cversion=2.1)',
   reason_sarif_version_missing: () => 'the SARIF log has no "version"; only 2.1.0 is supported',
@@ -387,6 +390,8 @@ const PT = {
     + `usa um de: ${p.supported}`,
   config_path_exists: (p) => `${p.path} já existe; usa --force para o substituir`,
   config_input_required: (p) => `"${p.input}" é obrigatório`,
+  config_marker_invalid: (p) => `comment-marker ${p.value} tem de ser um nome ou um `
+    + 'comentário HTML de uma linha, como <!-- quality-gate -->',
   cli_command_unknown: (p) => `comando desconhecido "${p.command}"; corre com --help`,
   cli_option_invalid: (p) => `opções inválidas: ${p.reason}`,
   init_metric_absent: (p) => `a métrica "${p.name}" não está no ficheiro de métricas`,
@@ -437,6 +442,8 @@ const PT = {
   reason_lcov_invalid_value: (p) => `valor de "${p.key}" inválido: "${p.value}"`,
   reason_levels_invalid: (p) => `tem de ser uma lista não vazia de ${p.known}`,
   reason_level_unknown: (p) => `nível desconhecido "${p.level}"`,
+  reason_rules_invalid: () => 'tem de ser uma lista não vazia de identificadores de regras, '
+    + 'como ["CA1502"]',
   reason_sarif_version: (p) => `a versão SARIF "${p.version}" não é suportada, só a 2.1.0 `
     + '(no dotnet build, usa -p:ErrorLog=<ficheiro>.sarif%2Cversion=2.1)',
   reason_sarif_version_missing: () => 'o registo SARIF não tem "version"; só a 2.1.0 é '

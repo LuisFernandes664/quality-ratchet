@@ -2,9 +2,9 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { GitHubApiError } from '../../src/core/errors.js';
+import { ConfigError, GitHubApiError } from '../../src/core/errors.js';
 import {
-  MAX_COMMENT_LENGTH, commentMarker, upsertComment,
+  MAX_COMMENT_LENGTH, commentMarker, customMarker, upsertComment,
 } from '../../src/github/comment.js';
 
 const REPO = 'dono/projecto';
@@ -73,6 +73,29 @@ describe('commentMarker', () => {
 
   test('remove os espaços à volta do nome', () => {
     assert.equal(commentMarker('  api '), '<!-- quality-ratchet:api -->');
+  });
+});
+
+describe('customMarker', () => {
+  test('um comentário HTML completo fica como está', () => {
+    assert.equal(customMarker('<!-- quality-gate -->'), '<!-- quality-gate -->');
+  });
+
+  test('um nome é envolvido num comentário HTML', () => {
+    assert.equal(customMarker(' quality-gate '), '<!-- quality-gate -->');
+  });
+
+  test('um valor que fecha o comentário antes do fim é recusado', () => {
+    assert.throws(() => customMarker('a --> b'), (error) => (
+      error instanceof ConfigError && error.code === 'config_marker_invalid'));
+  });
+
+  test('um valor com quebra de linha é recusado', () => {
+    assert.throws(() => customMarker('<!-- a\nb -->'), ConfigError);
+  });
+
+  test('um comentário HTML sem fecho é recusado', () => {
+    assert.throws(() => customMarker('<!-- quality-gate'), ConfigError);
   });
 });
 

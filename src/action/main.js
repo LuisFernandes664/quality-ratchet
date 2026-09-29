@@ -13,7 +13,12 @@ import { createTranslator, describeError } from '../core/messages.js';
 import { runRatchet } from '../core/ratchet.js';
 import { renderSummary, reportLogEntries } from '../core/summary.js';
 import { createGitHubClient } from '../github/client.js';
-import { MAX_COMMENT_LENGTH, commentMarker, upsertComment } from '../github/comment.js';
+import {
+  MAX_COMMENT_LENGTH,
+  commentMarker,
+  customMarker,
+  upsertComment,
+} from '../github/comment.js';
 import { collectMeasurements, loadBaseline, parseJsonText, readJsonFile } from '../run.js';
 import { readPullRequestFromEvent } from './context.js';
 import { createActionIO, readBooleanInput, readInput, readOptionalInput } from './io.js';
@@ -106,6 +111,7 @@ const COMMENT_REDUCTIONS = [
  * @property {string} token
  * @property {boolean} comment
  * @property {string} commentAuthor login dos comentários a actualizar ('' descobre-o)
+ * @property {string} marker marcador HTML do comentário
  * @property {string} baseRef referência do contrato ('' usa a merge base ou base.sha)
  * @property {string} name
  * @property {string} bypassLabel
@@ -163,7 +169,7 @@ function reportFailure(io, t, error) {
  * Lê e valida os inputs da action.
  * @param {Env} env
  * @returns {ActionInputs}
- * @throws {ConfigError} input booleano inválido
+ * @throws {ConfigError} input booleano ou marcador inválido
  */
 function readInputs(env) {
   const workspace = env.GITHUB_WORKSPACE ?? '.';
@@ -173,8 +179,7 @@ function readInputs(env) {
     baseline: resolvePath(workspace, readInput(env, 'baseline', DEFAULTS.baseline)),
     metrics: resolvePath(workspace, readInput(env, 'metrics', DEFAULTS.metrics)),
     token: readInput(env, 'token'),
-    comment: readBooleanInput(env, 'comment', true),
-    commentAuthor: readInput(env, 'comment-author'),
+    ...readCommentInputs(env),
     baseRef: readInput(env, 'base-ref'),
     name: readInput(env, 'name'),
     bypassLabel: readOptionalInput(env, 'bypass-label', DEFAULTS.bypassLabel),
@@ -182,6 +187,31 @@ function readInputs(env) {
     strict: readBooleanInput(env, 'strict', false),
     writeBaseline: writeBaseline === '' ? '' : resolvePath(workspace, writeBaseline),
   };
+}
+
+/**
+ * Inputs do comentário de sumário.
+ * @param {Env} env
+ * @returns {Pick<ActionInputs, 'comment'|'commentAuthor'|'marker'>}
+ * @throws {ConfigError} input booleano ou marcador inválido
+ */
+function readCommentInputs(env) {
+  return {
+    comment: readBooleanInput(env, 'comment', true),
+    commentAuthor: readInput(env, 'comment-author'),
+    marker: markerInput(readInput(env, 'comment-marker'), readInput(env, 'name')),
+  };
+}
+
+/**
+ * Marcador do comentário: o input comment-marker ou, sem ele, o de omissão com o nome.
+ * @param {string} custom valor do input comment-marker
+ * @param {string} name valor do input name
+ * @returns {string}
+ * @throws {ConfigError} config_marker_invalid
+ */
+function markerInput(custom, name) {
+  return custom === '' ? commentMarker(name) : customMarker(custom);
 }
 
 /**
@@ -578,7 +608,7 @@ async function commentRequest(run, client, pr, body) {
   return {
     repo: requireRepository(run.deps.env),
     number: pr.number,
-    marker: commentMarker(run.inputs.name),
+    marker: run.inputs.marker,
     author: await commentAuthor(run, client),
     body,
   };
@@ -610,7 +640,7 @@ async function commentAuthor(run, client) {
  * @returns {string}
  */
 function commentBody(run, report, summary) {
-  const limit = MAX_COMMENT_LENGTH - commentMarker(run.inputs.name).length - 1;
+  const limit = MAX_COMMENT_LENGTH - run.inputs.marker.length - 1;
   const options = { name: run.inputs.name, notes: [...run.notes, ABBREVIATED_NOTE] };
   let text = summary;
   let reduced = report;

@@ -330,8 +330,18 @@ describe('parseBaseline v2', () => {
       .warnings, [{ code: 'unknown_field', params: { name: 'c', field: 'source.feild' } }]);
   });
 
+  test('source.rules que nao e lista de textos e erro', () => {
+    const source = { format: 'sarif', path: 's.sarif', rules: 'CA1502' };
+
+    assert.deepEqual(issueCodes(() => parseBaseline({
+      metrics: { s: { value: 1, direction: 'down', source } },
+    })), ['source_invalid']);
+  });
+
   test('source com todos os campos conhecidos nao gera avisos', () => {
-    const sarif = { format: 'sarif', path: 's.sarif', field: 'count', levels: ['error'] };
+    const sarif = {
+      format: 'sarif', path: 's.sarif', field: 'count', levels: ['error'], rules: ['CA1502'],
+    };
     const json = { format: 'json', path: 'm.json', pointer: '/a' };
     const raw = {
       metrics: {

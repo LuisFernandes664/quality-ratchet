@@ -115,7 +115,7 @@ function change(name, kind, fields, before, after) {
 
 /**
  * Identidade da source de uma regra, para saber se o PR mudou o que é medido. A ordem e
- * as repetições de `levels` não contam, nem as formas equivalentes do caminho (`./a` é
+ * as repetições de `levels` e `rules` não contam, nem as formas equivalentes do caminho (`./a` é
  * `a`). Tudo o resto conta, incluindo acrescentar ou retirar a source, ou escrever o
  * `field` por omissão que antes estava implícito: na dúvida, pede-se autorização. As
  * chaves desconhecidas ficam de fora, porque os extractors não as lêem.
@@ -125,10 +125,19 @@ function change(name, kind, fields, before, after) {
 export function sourceKey(rule) {
   const source = rule?.source;
   if (source === undefined) return '';
-  const levels = source.levels === undefined ? null : [...new Set(source.levels)].sort();
   const file = path.posix.normalize(source.path);
   const { format, field = null, pointer = null } = source;
-  return JSON.stringify([format, file, field, pointer, levels]);
+  return JSON.stringify([format, file, field, pointer, setOf(source.levels),
+    setOf(source.rules)]);
+}
+
+/**
+ * Lista sem repetidos e ordenada, ou null quando ausente.
+ * @param {string[]|undefined} list
+ * @returns {string[]|null}
+ */
+function setOf(list) {
+  return list === undefined ? null : [...new Set(list)].sort();
 }
 
 /**
