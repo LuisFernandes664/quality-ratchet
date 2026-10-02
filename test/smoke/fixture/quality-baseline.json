@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "frozen_at": "2026-10-02",
+  "metrics": {
+    "coverage_pct": {
+      "value": 80,
+      "direction": "up",
+      "source": {
+        "format": "json",
+        "path": "report.json",
+        "pointer": "/coverage_pct"
+      }
+    }
+  }
+}

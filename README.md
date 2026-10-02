@@ -520,7 +520,8 @@ to use it:
 - **`write-baseline: <path>`** writes it to a file in the workspace when something
   improved, so that a later step can commit it. [`lock-in-on-main.yml`](examples/workflows/lock-in-on-main.yml)
   runs on every push to `main` and opens (or updates) a pull request that tightens the
-  baseline.
+  baseline. On Gitea and Forgejo, [`lock-in-gitea.yml`](examples/workflows/lock-in-gitea.yml)
+  does the same with `git push` and the API.
 - **`strict: true`** fails the pull request when an improvement beyond the tolerance is
   not in the committed baseline. The author runs
   `npx github:LuisFernandes664/quality-ratchet#v2 update` and commits the result. The
@@ -865,8 +866,13 @@ to the login that posts it. Without it, the action only updates comments by the 
 login or, when it cannot learn that login, by `[bot]` accounts.
 
 Depending on the instance, `uses:` may need the full URL
-(`https://github.com/LuisFernandes664/quality-ratchet@v2`). This setup is not tested in
-this repository's CI; reports of what works and what does not are welcome.
+(`https://github.com/LuisFernandes664/quality-ratchet@v2`).
+
+CI runs a smoke test of this setup ([`test/smoke/gitea.sh`](test/smoke/gitea.sh)) on
+Gitea 1.26 and 28 with act_runner 0.6.1, in containers: the contract read at the merge
+base, the comment updated in place, and the steps of the lock-in example that write the
+baseline and open the pull request. Forgejo is not covered by it; reports of what works
+and what does not are welcome.
 
 ## Versions
 
@@ -926,8 +932,9 @@ types, and `npm run typecheck` runs `tsc` in strict mode over plain JavaScript. 
 no build step.
 
 **Tested on itself.** CI runs the tests on Node.js 20, 22 and 24, the typecheck, the
-action against itself with metrics that must pass and metrics that must fail, and a
-ratchet on this repository's own coverage.
+action against itself with metrics that must pass and metrics that must fail, a ratchet
+on this repository's own coverage, and the action on Gitea Actions, with Gitea and
+act_runner in containers.
 
 ## Examples
 
@@ -941,6 +948,7 @@ ratchet on this repository's own coverage.
 | [`examples/workflows/dotnet.yml`](examples/workflows/dotnet.yml) | the workflow for `dotnet.json` |
 | [`examples/workflows/monorepo.yml`](examples/workflows/monorepo.yml) | two named ratchets, one per package |
 | [`examples/workflows/lock-in-on-main.yml`](examples/workflows/lock-in-on-main.yml) | a pull request that tightens the baseline after each push to `main` |
+| [`examples/workflows/lock-in-gitea.yml`](examples/workflows/lock-in-gitea.yml) | the same lock-in on Gitea and Forgejo, with `git push` and the API |
 | [`examples/workflows/gitlab-ci.yml`](examples/workflows/gitlab-ci.yml) | the command line tool on GitLab merge requests |
 
 Each example baseline is meant to be committed as `quality-baseline.json` at the root of

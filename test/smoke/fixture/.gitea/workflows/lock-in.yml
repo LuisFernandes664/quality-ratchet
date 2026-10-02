@@ -1,0 +1,53 @@
+# examples/workflows/lock-in-gitea.yml without the steps that collect the reports, and with
+# the action of the smoke server. The last two steps are the ones of the example, word for
+# word except for that `uses:` (test/examples.test.js compares them).
+name: Lock in quality improvements
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  lock-in:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Quality ratchet
+        id: ratchet
+        # A regression that reached main (for example a forgiven hotfix) must not stop
+        # the other metrics from being locked in: the new baseline never loosens.
+        continue-on-error: true
+        uses: http://gitea:3000/smoke/quality-ratchet@main
+        with:
+          comment: false
+          write-baseline: quality-baseline.json
+
+      - name: Open the lock-in pull request
+        # Only when the ratchet produced a result: after a configuration error nothing is
+        # written.
+        if: steps.ratchet.outputs.new-baseline != ''
+        env:
+          TOKEN: ${{ github.token }}
+          BASELINE: quality-baseline.json
+          BRANCH: quality-ratchet/lock-in
+          TITLE: "chore: lock in quality improvements"
+        run: |
+          if git diff --quiet -- "$BASELINE"; then
+            echo "Nothing to lock in."
+            exit 0
+          fi
+          git checkout -B "$BRANCH"
+          git -c user.name=quality-ratchet -c user.email=quality-ratchet@noreply.invalid \
+            commit -m "$TITLE" -- "$BASELINE"
+          git push --force origin "$BRANCH"
+          response="$(mktemp)"
+          status="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
+            -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+            -d "{\"base\":\"$GITHUB_REF_NAME\",\"head\":\"$BRANCH\",\"title\":\"$TITLE\"}" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pulls")"
+          # 409: the pull request is already open, and the push above updated it.
+          if [ "$status" != 201 ] && [ "$status" != 409 ]; then
+            cat "$response"
+            exit 1
+          fi
