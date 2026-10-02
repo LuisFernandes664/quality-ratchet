@@ -149,6 +149,26 @@ jobs:
             exit 1
           fi
 
+  gitea-smoke:
+    name: smoke (gitea ${{ matrix.gitea }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        gitea: ["1.26", "28"]
+    steps:
+      - uses: actions/checkout@v7
+
+      # Gitea and act_runner in containers, with the action of this commit: governance at
+      # the merge base, the comment updated in place and the lock-in example.
+      - name: The action runs on Gitea Actions
+        env:
+          GITEA_IMAGE: gitea/gitea:${{ matrix.gitea }}
+        run: bash test/smoke/gitea.sh
+
   dogfood:
     runs-on: ubuntu-latest
     permissions:

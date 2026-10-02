@@ -7,6 +7,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `examples/workflows/lock-in-gitea.yml`: the lock-in pull request on Gitea and Forgejo,
+  with `git push` and the API instead of `peter-evans/create-pull-request` (#10).
+- CI runs a smoke test on Gitea Actions (Gitea 1.26 and 28 with act_runner 0.6.1, in
+  containers): the contract read at the merge base, the comment updated in place and the
+  lock-in example (#10).
+
 ## [2.3.0] - 2026-09-29
 
 ### Added

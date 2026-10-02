@@ -1,0 +1,26 @@
+# The gate of the fixture repository. Each commit of the pull request says in
+# expected-outputs.txt what the ratchet must answer, so the job is green only when the
+# outputs are the expected ones.
+name: Quality ratchet
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Quality ratchet
+        id: ratchet
+        continue-on-error: true
+        uses: http://gitea:3000/smoke/quality-ratchet@main
+
+      - name: The outputs are the ones this commit expects
+        env:
+          PASSED: ${{ steps.ratchet.outputs.passed }}
+          LOOSENED: ${{ steps.ratchet.outputs.loosened }}
+        run: |
+          printf 'passed=%s loosened=%s\n' "$PASSED" "$LOOSENED" | diff expected-outputs.txt -
