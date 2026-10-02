@@ -1,6 +1,6 @@
 # examples/workflows/lock-in-gitea.yml without the steps that collect the reports, and with
-# the action of the smoke server. The last step is the one of the example, word for word
-# (test/examples.test.js compares them).
+# the action of the smoke server. The last two steps are the ones of the example, word for
+# word except for that `uses:` (test/examples.test.js compares them).
 name: Lock in quality improvements
 
 on:
@@ -15,6 +15,8 @@ jobs:
 
       - name: Quality ratchet
         id: ratchet
+        # A regression that reached main (for example a forgiven hotfix) must not stop
+        # the other metrics from being locked in: the new baseline never loosens.
         continue-on-error: true
         uses: http://gitea:3000/smoke/quality-ratchet@main
         with:

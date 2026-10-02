@@ -1,12 +1,15 @@
 # lock-in-on-main.yml for Gitea and Forgejo Actions, where peter-evans/create-pull-request
 # does not work: the last step pushes the tightened baseline to a branch with git and opens
-# the pull request through the API. This repository's CI runs that step on Gitea; Forgejo
-# has the same API, but is not tested.
+# the pull request through the API. This repository's CI runs the last two steps on Gitea;
+# Forgejo has the same API, but is not tested.
 #
 # Notes:
 # - The lock-in pull request only tightens the baseline, so it needs no special title.
 # - The branch is rebuilt from main and force-pushed on every run. While its pull request
 #   is open the API answers 409 to a second one, and the push has already updated it.
+# - Runs are not serialised (`concurrency` depends on the server version): with several
+#   runners, an older run that finishes last leaves its values on the branch until the
+#   next push to main.
 # - When nothing is left to lock in, an open lock-in pull request is not closed: close it
 #   by hand, or merge it and let the next push settle the baseline.
 # - The checkout keeps the workflow token, which may push to the repository. Pull requests

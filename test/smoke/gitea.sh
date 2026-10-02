@@ -57,7 +57,7 @@ trap cleanup EXIT
 
 # api METHOD PATH [JSON]: calls the API as the admin user.
 api() {
-  curl -sS --fail-with-body -u "$OWNER:$PASSWORD" -X "$1" \
+  curl -sS --fail-with-body --max-time 30 -u "$OWNER:$PASSWORD" -X "$1" \
     -H 'Content-Type: application/json' ${3:+-d "$3"} \
     "http://$SMOKE_HOST:$SMOKE_PORT/api/v1$2"
 }
@@ -89,11 +89,10 @@ expect() {
   echo "ok: $1"
 }
 
-# commit MESSAGE: commits the whole folder and prints the commit.
+# commit MESSAGE: commits the whole folder.
 commit() {
   git add -A
   git commit -q -m "$1"
-  git rev-parse HEAD
 }
 
 # publish NAME: creates the repository and pushes the current folder as its main branch.
@@ -102,7 +101,7 @@ publish() {
   git init -q -b main .
   git config commit.gpgsign false
   git remote add origin "$REMOTE/$1.git"
-  commit "$1" >/dev/null
+  commit "$1"
   git push -q origin main
 }
 
@@ -124,7 +123,7 @@ wait_for_run() {
 # push_report VALUE: main measures a new coverage; waits for the lock-in workflow.
 push_report() {
   printf '{ "coverage_pct": %s }\n' "$1" > report.json
-  commit "coverage $1" >/dev/null
+  commit "coverage $1"
   git push -q origin main
   wait_for_run "$(git rev-parse HEAD)"
 }
@@ -136,10 +135,9 @@ lock_in_pulls() {
     | json ".filter((pull) => $mine).map((pull) => pull.number).join()"
 }
 
-# Coverage in the baseline of the lock-in branch.
-locked_coverage() {
-  api GET "$REPO/raw/quality-baseline.json?ref=$LOCK_IN_BRANCH" \
-    | json .metrics.coverage_pct.value
+# baseline_coverage REF: coverage in the baseline of a branch.
+baseline_coverage() {
+  api GET "$REPO/raw/quality-baseline.json?ref=$1" | json .metrics.coverage_pct.value
 }
 
 # summary_comments NUMBER FIELD: a field of each summary comment of a pull request.
@@ -155,9 +153,10 @@ docker run -d --name "$GITEA" --network "$NETWORK" --network-alias gitea \
   -p "$SMOKE_PORT:3000" \
   -e GITEA__security__INSTALL_LOCK=true \
   -e GITEA__server__ROOT_URL=http://gitea:3000/ \
+  -e GITEA__service__DISABLE_REGISTRATION=true \
   -e GITEA__actions__LOG_COMPRESSION=none \
   "$GITEA_IMAGE" >/dev/null
-wait_until 120 curl -fsS "http://$SMOKE_HOST:$SMOKE_PORT/api/healthz"
+wait_until 120 curl -fsS --max-time 5 "http://$SMOKE_HOST:$SMOKE_PORT/api/healthz"
 docker exec -u git "$GITEA" gitea admin user create --admin --username "$OWNER" \
   --password "$PASSWORD" --email smoke@example.com --must-change-password=false >/dev/null
 
@@ -185,22 +184,25 @@ publish fixture
 
 echo "== Lock-in on main"
 wait_for_run "$(git rev-parse HEAD)"
-expect 'a push with nothing to lock in opens no pull request' "$(lock_in_pulls)" ''
+pull="$(lock_in_pulls)"
+expect 'a push with nothing to lock in opens no pull request' "$pull" ''
 # Cut before main tightens: this branch stays behind the lock-in.
 git branch feature
 push_report 85
 pull="$(lock_in_pulls)"
 expect 'an improvement opens the lock-in pull request' "$pull" 1
-expect 'its baseline has the measured value' "$(locked_coverage)" 85
+expect 'its baseline has the measured value' "$(baseline_coverage "$LOCK_IN_BRANCH")" 85
 push_report 90
 expect 'a second improvement reuses the pull request' "$(lock_in_pulls)" "$pull"
-expect 'and updates its baseline' "$(locked_coverage)" 90
+expect 'and updates its baseline' "$(baseline_coverage "$LOCK_IN_BRANCH")" 90
 wait_until 60 api POST "$REPO/pulls/$pull/merge" '{"Do":"merge"}'
+expect 'merging it tightens main' "$(baseline_coverage main)" 90
 
 echo "== Governance and comment on a pull request"
 git checkout -q feature
 echo 'passed=true loosened=[]' > expected-outputs.txt
-first="$(commit 'behind the tightened base')"
+commit 'behind the tightened base'
+first="$(git rev-parse HEAD)"
 git push -q origin feature
 number="$(api POST "$REPO/pulls" '{"base":"main","head":"feature","title":"feat: behind"}' \
   | json .number)"
@@ -216,9 +218,11 @@ case "$comment" in
 esac
 echo 'ok: the first run posts one comment'
 
-sed -i 's/"value": 80/"value": 70/' quality-baseline.json
+sed 's/"value": 80/"value": 70/' quality-baseline.json > loosened.json
+mv loosened.json quality-baseline.json
 echo 'passed=false loosened=["coverage_pct"]' > expected-outputs.txt
-second="$(commit 'loosen the baseline')"
+commit 'loosen the baseline'
+second="$(git rev-parse HEAD)"
 git push -q origin feature
 wait_for_run "$second"
 echo 'ok: loosening the baseline without an authorising title fails'

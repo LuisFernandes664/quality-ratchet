@@ -4,7 +4,7 @@
  * núcleo sem avisos, só podem usar formatos e campos que os extractors conhecem, estão na
  * forma exacta que a CLI escreve, e o schema JSON descreve exactamente o que o código aceita
  * e vive na tag da major do package.json. O exemplo do GitLab governa pela merge base, e o
- * passo de lock-in do exemplo de Gitea é o que o smoke test corre num servidor real.
+ * exemplo de lock-in em Gitea acaba nos passos que o smoke test corre num servidor real.
  */
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
@@ -47,8 +47,11 @@ const GITEA_LOCK_IN_EXAMPLE = 'lock-in-gitea.yml';
 /** O mesmo workflow no repositório que o smoke test empurra para o Gitea. */
 const GITEA_LOCK_IN_FIXTURE = path.join(ROOT, 'test/smoke/fixture/.gitea/workflows/lock-in.yml');
 
-/** Linha que abre o passo que cria o pull request de lock-in. */
-const LOCK_IN_STEP = '      - name: Open the lock-in pull request\n';
+/** Linha que abre o passo da catraca, o primeiro dos que o smoke test corre. */
+const LOCK_IN_STEP = '      - name: Quality ratchet\n';
+
+/** Linha `uses:` de um passo: o exemplo usa a action publicada, o smoke test a do commit. */
+const USES_LINE = /^ +uses: .*\n/m;
 
 /** Exemplos que o README promete. */
 const EXPECTED_EXAMPLES = ['dotnet.json', 'node.json', 'python.json'];
@@ -217,15 +220,15 @@ function canonicalText(raw) {
 }
 
 /**
- * Passo que abre o pull request de lock-in, do nome até ao fim do workflow.
+ * Passos de lock-in de um workflow, da catraca até ao fim, sem a linha `uses:`.
  * @param {string} filePath
  * @returns {Promise<string>}
  */
-async function lockInStep(filePath) {
+async function lockInSteps(filePath) {
   const workflow = await readFile(filePath, 'utf8');
   const start = workflow.indexOf(LOCK_IN_STEP);
   assert.notEqual(start, -1, filePath);
-  return workflow.slice(start);
+  return workflow.slice(start).replace(USES_LINE, '');
 }
 
 describe('baselines de exemplo', () => {
@@ -389,9 +392,9 @@ describe('exemplo de GitLab CI', () => {
 });
 
 describe('exemplo de lock-in em Gitea', () => {
-  test('o passo que abre o pull request e o que o smoke test corre', async () => {
-    const example = await lockInStep(path.join(WORKFLOWS_DIR, GITEA_LOCK_IN_EXAMPLE));
+  test('os passos da catraca e do pull request sao os que o smoke test corre', async () => {
+    const example = await lockInSteps(path.join(WORKFLOWS_DIR, GITEA_LOCK_IN_EXAMPLE));
 
-    assert.equal(example, await lockInStep(GITEA_LOCK_IN_FIXTURE));
+    assert.equal(example, await lockInSteps(GITEA_LOCK_IN_FIXTURE));
   });
 });

@@ -870,8 +870,9 @@ Depending on the instance, `uses:` may need the full URL
 
 CI runs a smoke test of this setup ([`test/smoke/gitea.sh`](test/smoke/gitea.sh)) on
 Gitea 1.26 and 28 with act_runner 0.6.1, in containers: the contract read at the merge
-base, the comment updated in place and the lock-in example. Forgejo is not covered by it;
-reports of what works and what does not are welcome.
+base, the comment updated in place, and the steps of the lock-in example that write the
+baseline and open the pull request. Forgejo is not covered by it; reports of what works
+and what does not are welcome.
 
 ## Versions
 
